@@ -208,6 +208,14 @@ impl Object {
     }
 }
 
+impl crate::gc::Mark for Object {
+    fn mark(&self) {
+        for value in self.inner.values() {
+            value.mark();
+        }
+    }
+}
+
 impl<'a> IntoIterator for &'a Object {
     type Item = (&'a String, &'a Value);
     type IntoIter = Iter<'a>;

@@ -27,6 +27,12 @@ pub struct Format {
     pub(crate) spec: FormatSpec,
 }
 
+impl crate::gc::Mark for Format {
+    fn mark(&self) {
+        self.value.mark();
+    }
+}
+
 impl Named for Format {
     const NAME: RawStr = RawStr::from_str("Format");
 }

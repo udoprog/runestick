@@ -68,6 +68,8 @@ pub mod format;
 mod from_value;
 mod function;
 mod future;
+#[cfg(feature = "gc")]
+mod gc;
 mod generator;
 mod generator_state;
 mod guarded_args;

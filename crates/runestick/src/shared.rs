@@ -26,6 +26,7 @@ impl<T> Shared<T> {
         let inner = Box::leak(Box::new(SharedBox {
             access: Access::new(false),
             count: Cell::new(1),
+            gc: crate::gc::Header::new(),
             data: data.into(),
         }));
 
@@ -272,6 +273,20 @@ impl<T> Shared<T> {
     }
 }
 
+impl<T> crate::gc::Mark for Shared<T>
+where
+    T: crate::gc::Mark,
+{
+    fn mark(&self) {
+        // Safety: header is guaranteed to be valid, because we have a live
+        // reference to a shared object.
+        unsafe {
+            let header = self.inner.as_ref();
+            header.gc.mark();
+        }
+    }
+}
+
 impl<T: ?Sized> Shared<T> {
     /// Get a reference to the interior value while checking for shared access.
     ///
@@ -440,6 +455,7 @@ impl Shared<AnyObj> {
         let inner = ptr::NonNull::from(Box::leak(Box::new(SharedBox {
             access: Access::new(true),
             count: Cell::new(2),
+            gc: crate::gc::Header::new(),
             data: any.into(),
         })));
 
@@ -730,6 +746,8 @@ struct SharedBox<T: ?Sized> {
     access: Access,
     /// The number of strong references to the shared data.
     count: Cell<usize>,
+    /// Optional gc header. If the feature is disabled, this is zero-sized.
+    gc: crate::gc::Header,
     /// The value being held. Guarded by the `access` field to determine if it
     /// can be access shared or exclusively.
     data: UnsafeCell<T>,

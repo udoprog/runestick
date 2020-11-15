@@ -71,6 +71,12 @@ impl Tuple {
     }
 }
 
+impl crate::gc::Mark for Tuple {
+    fn mark(&self) {
+        self.inner.mark();
+    }
+}
+
 impl fmt::Debug for Tuple {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "(")?;

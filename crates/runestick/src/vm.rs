@@ -2719,6 +2719,12 @@ impl Vm {
     }
 }
 
+impl crate::gc::Mark for Vm {
+    fn mark(&self) {
+        self.stack.mark();
+    }
+}
+
 /// A call frame.
 ///
 /// This is used to store the return point after an instruction has been run.

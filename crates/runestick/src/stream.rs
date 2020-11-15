@@ -49,6 +49,12 @@ impl Stream {
     }
 }
 
+impl crate::gc::Mark for Stream {
+    fn mark(&self) {
+        self.execution.mark();
+    }
+}
+
 impl fmt::Debug for Stream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Stream")

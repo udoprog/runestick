@@ -26,6 +26,10 @@ impl UnitStruct {
     }
 }
 
+impl crate::gc::Mark for UnitStruct {
+    fn mark(&self) {}
+}
+
 impl fmt::Debug for UnitStruct {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.rtti.item)
@@ -72,6 +76,12 @@ impl TupleStruct {
     }
 }
 
+impl crate::gc::Mark for TupleStruct {
+    fn mark(&self) {
+        self.data.mark();
+    }
+}
+
 impl fmt::Debug for TupleStruct {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{:?}", self.rtti.item, self.data)
@@ -115,6 +125,12 @@ impl TupleVariant {
     /// Get the mutable value at the given index in the tuple.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Value> {
         self.data.get_mut(index)
+    }
+}
+
+impl crate::gc::Mark for TupleVariant {
+    fn mark(&self) {
+        self.data.mark();
     }
 }
 
@@ -178,6 +194,12 @@ impl Struct {
     }
 }
 
+impl crate::gc::Mark for Struct {
+    fn mark(&self) {
+        self.data.mark();
+    }
+}
+
 impl fmt::Debug for Struct {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.data.debug_struct(&self.rtti.item))
@@ -232,6 +254,12 @@ impl StructVariant {
     }
 }
 
+impl crate::gc::Mark for StructVariant {
+    fn mark(&self) {
+        self.data.mark();
+    }
+}
+
 impl fmt::Debug for StructVariant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.data.debug_struct(&self.rtti.item))
@@ -254,6 +282,10 @@ impl UnitVariant {
     pub fn type_info(&self) -> TypeInfo {
         TypeInfo::Variant(self.rtti.clone())
     }
+}
+
+impl crate::gc::Mark for UnitVariant {
+    fn mark(&self) {}
 }
 
 impl fmt::Debug for UnitVariant {
@@ -932,6 +964,84 @@ impl fmt::Debug for Value {
         }
 
         Ok(())
+    }
+}
+
+impl crate::gc::Mark for Value {
+    fn mark(&self) {
+        match self {
+            Self::Unit => (),
+            Self::Bool(..) => (),
+            Self::Byte(..) => (),
+            Self::Char(..) => (),
+            Self::Integer(..) => (),
+            Self::Float(..) => (),
+            Self::Type(..) => (),
+            Self::StaticString(..) => (),
+            Self::String(value) => {
+                Shared::mark(value);
+            }
+            Self::Bytes(value) => {
+                Shared::mark(value);
+            }
+            Self::Vec(value) => {
+                Shared::mark(value);
+            }
+            Self::Tuple(value) => {
+                Shared::mark(value);
+            }
+            Self::Object(value) => {
+                Shared::mark(value);
+            }
+            Self::Future(value) => {
+                Shared::mark(value);
+            }
+            Self::Stream(value) => {
+                Shared::mark(value);
+            }
+            Self::Generator(value) => {
+                Shared::mark(value);
+            }
+            Self::GeneratorState(value) => {
+                Shared::mark(value);
+            }
+            Self::Option(value) => {
+                Shared::mark(value);
+            }
+            Self::Result(value) => {
+                Shared::mark(value);
+            }
+            Self::UnitStruct(value) => {
+                Shared::mark(value);
+            }
+            Self::TupleStruct(value) => {
+                Shared::mark(value);
+            }
+            Self::Struct(value) => {
+                Shared::mark(value);
+            }
+            Self::UnitVariant(value) => {
+                Shared::mark(value);
+            }
+            Self::TupleVariant(value) => {
+                Shared::mark(value);
+            }
+            Self::StructVariant(value) => {
+                Shared::mark(value);
+            }
+            Self::Function(value) => {
+                Shared::mark(value);
+            }
+            Self::Format(value) => {
+                value.mark();
+            }
+            Self::Iterator(value) => {
+                Shared::mark(value);
+            }
+            Self::Any(value) => {
+                Shared::mark(value);
+            }
+        }
     }
 }
 

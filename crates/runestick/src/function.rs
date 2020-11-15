@@ -282,6 +282,16 @@ impl FunctionImpl<Value> {
     }
 }
 
+impl<V> crate::gc::Mark for FunctionImpl<V>
+where
+    V: Clone + crate::gc::Mark,
+    Tuple: From<Box<[V]>>,
+{
+    fn mark(&self) {
+        self.inner.mark();
+    }
+}
+
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.inner {
@@ -339,6 +349,20 @@ enum Inner<V> {
     FnUnitVariant(FnUnitVariant),
     /// Constructor for a tuple variant.
     FnTupleVariant(FnTupleVariant),
+}
+
+impl<V> crate::gc::Mark for Inner<V>
+where
+    V: crate::gc::Mark,
+{
+    fn mark(&self) {
+        match self {
+            Inner::FnClosureOffset(f) => {
+                f.environment.mark();
+            }
+            _ => (),
+        }
+    }
 }
 
 struct FnHandler {

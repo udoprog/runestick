@@ -95,6 +95,10 @@ impl Bytes {
     }
 }
 
+impl crate::gc::Mark for Bytes {
+    fn mark(&self) {}
+}
+
 impl From<Vec<u8>> for Bytes {
     fn from(bytes: Vec<u8>) -> Self {
         Self { bytes }

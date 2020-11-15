@@ -133,6 +133,14 @@ impl Vec {
     }
 }
 
+impl crate::gc::Mark for Vec {
+    fn mark(&self) {
+        for value in &self.inner {
+            value.mark();
+        }
+    }
+}
+
 impl Named for Vec {
     const NAME: RawStr = RawStr::from_str("Vec");
 }

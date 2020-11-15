@@ -236,6 +236,12 @@ impl Iterator {
     }
 }
 
+impl crate::gc::Mark for Iterator {
+    fn mark(&self) {
+        // BUG: we absolutely must mark values owned by an iterator somehow.
+    }
+}
+
 impl fmt::Debug for Iterator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.iter, f)

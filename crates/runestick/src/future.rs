@@ -41,6 +41,12 @@ impl Future {
     }
 }
 
+impl crate::gc::Mark for Future {
+    fn mark(&self) {
+        // BUG: we absolutely must mark values owned by an iterator somehow.
+    }
+}
+
 impl future::Future for Future {
     type Output = Result<Value, VmError>;
 

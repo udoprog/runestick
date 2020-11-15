@@ -16,12 +16,6 @@ pub struct AnyObj {
     data: *const (),
 }
 
-impl fmt::Debug for AnyObj {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.debug(f)
-    }
-}
-
 impl AnyObj {
     /// Construct a new any from the original any.
     pub fn new<T>(data: T) -> Self
@@ -232,6 +226,18 @@ impl AnyObj {
     /// Access the underlying type id for the data.
     pub fn type_hash(&self) -> Hash {
         (self.vtable.type_hash)()
+    }
+}
+
+impl crate::gc::Mark for AnyObj {
+    fn mark(&self) {
+        // BUG: these objects absolutely must implement mark.
+    }
+}
+
+impl fmt::Debug for AnyObj {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.debug(f)
     }
 }
 

@@ -21,6 +21,15 @@ impl GeneratorState {
     }
 }
 
+impl crate::gc::Mark for GeneratorState {
+    fn mark(&self) {
+        match self {
+            Self::Yielded(value) => value.mark(),
+            Self::Complete(value) => value.mark(),
+        }
+    }
+}
+
 impl FromValue for Shared<GeneratorState> {
     fn from_value(value: Value) -> Result<Self, VmError> {
         Ok(value.into_generator_state()?)

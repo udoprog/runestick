@@ -50,6 +50,12 @@ impl Generator {
     }
 }
 
+impl crate::gc::Mark for Generator {
+    fn mark(&self) {
+        self.execution.mark();
+    }
+}
+
 impl fmt::Debug for Generator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Generator")

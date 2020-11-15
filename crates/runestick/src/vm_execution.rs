@@ -218,6 +218,12 @@ impl VmExecution {
     }
 }
 
+impl crate::gc::Mark for VmExecution {
+    fn mark(&self) {
+        self.vms.mark();
+    }
+}
+
 /// A wrapper that makes [`VmExecution`] [`Send`].
 ///
 /// This is accomplished by preventing any [`Value`] from escaping the [`Vm`].

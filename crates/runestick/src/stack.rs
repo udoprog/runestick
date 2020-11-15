@@ -206,6 +206,12 @@ impl Stack {
     }
 }
 
+impl crate::gc::Mark for Stack {
+    fn mark(&self) {
+        self.stack.mark();
+    }
+}
+
 impl iter::FromIterator<Value> for Stack {
     fn from_iter<T: IntoIterator<Item = Value>>(iter: T) -> Self {
         Self {

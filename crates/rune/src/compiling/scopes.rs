@@ -119,7 +119,7 @@ impl Scope {
     }
 
     /// Insert a new local, and return the old one if there's a conflict.
-    fn decl_var(&mut self, name: &str, span: Span) -> usize {
+    pub(crate) fn decl_var(&mut self, name: &str, span: Span) -> usize {
         let offset = self.total_var_count;
 
         log::trace!("decl {} => {}", name, offset);

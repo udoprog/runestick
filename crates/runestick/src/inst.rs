@@ -805,10 +805,11 @@ pub enum Inst {
     /// # Operation
     ///
     /// ```text
-    /// <object>
     /// => <boolean>
     /// ```
     MatchObject {
+        /// The address of the target object.
+        target: InstAddress,
         /// Type constraints that the object must match.
         type_check: TypeCheck,
         /// The slot of object keys to use.
@@ -1142,11 +1143,16 @@ impl fmt::Display for Inst {
                 write!(fmt, "match-sequence {}, {}, {}", type_check, len, exact)?;
             }
             Self::MatchObject {
+                target,
                 type_check,
                 slot,
                 exact,
             } => {
-                write!(fmt, "match-object {}, {}, {}", type_check, slot, exact)?;
+                write!(
+                    fmt,
+                    "match-object {}, {}, {}, {}",
+                    target, type_check, slot, exact
+                )?;
             }
             Self::Yield => {
                 write!(fmt, "yield")?;

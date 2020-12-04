@@ -1004,21 +1004,14 @@ impl Vm {
     }
 
     fn on_object_keys<F, O>(
-        &mut self,
+        value: &Value,
         type_check: TypeCheck,
-        slot: usize,
+        keys: &[String],
         f: F,
     ) -> Result<Option<O>, VmError>
     where
         F: FnOnce(&Object, &[String]) -> O,
     {
-        let value = self.stack.pop()?;
-
-        let keys = self
-            .unit
-            .lookup_object_keys(slot)
-            .ok_or_else(|| VmErrorKind::MissingStaticObjectKeys { slot })?;
-
         match (type_check, value) {
             (TypeCheck::Object, Value::Object(object)) => {
                 let object = object.borrow_ref()?;
@@ -2423,11 +2416,19 @@ impl Vm {
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_match_object(
         &mut self,
+        target: InstAddress,
         type_check: TypeCheck,
         slot: usize,
         exact: bool,
     ) -> Result<(), VmError> {
-        let result = self.on_object_keys(type_check, slot, |object, keys| {
+        let target = self.stack.address_ref(target)?;
+
+        let keys = self
+            .unit
+            .lookup_object_keys(slot)
+            .ok_or_else(|| VmErrorKind::MissingStaticObjectKeys { slot })?;
+
+        let result = Self::on_object_keys(&*target, type_check, keys, |object, keys| {
             if exact {
                 if object.len() != keys.len() {
                     return false;
@@ -2953,11 +2954,12 @@ impl Vm {
                     self.op_match_sequence(type_check, len, exact)?;
                 }
                 Inst::MatchObject {
+                    target,
                     type_check,
                     slot,
                     exact,
                 } => {
-                    self.op_match_object(type_check, slot, exact)?;
+                    self.op_match_object(target, type_check, slot, exact)?;
                 }
                 Inst::Yield => {
                     self.advance();

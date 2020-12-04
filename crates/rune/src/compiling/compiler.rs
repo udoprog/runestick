@@ -281,7 +281,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Encode a vector pattern match.
-    pub(crate) fn compile_pat_vec(
+    fn compile_pat_vec(
         &mut self,
         pat_vec: &ast::PatVec,
         false_label: Label,
@@ -337,7 +337,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Encode a vector pattern match.
-    pub(crate) fn compile_pat_tuple(
+    fn compile_pat_tuple(
         &mut self,
         pat_tuple: &ast::PatTuple,
         false_label: Label,
@@ -453,7 +453,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Encode an object pattern match.
-    pub(crate) fn compile_pat_object(
+    fn compile_pat_object(
         &mut self,
         pat_object: &ast::PatObject,
         false_label: Label,
@@ -461,12 +461,6 @@ impl<'a> Compiler<'a> {
     ) -> CompileResult<()> {
         let span = pat_object.span();
         log::trace!("PatObject => {:?}", self.source.source(span));
-
-        // NB: bind the loaded variable (once) to an anonymous var.
-        // We reduce the number of copy operations by having specialized
-        // operations perform the load from the given offset.
-        load(self, Needs::Value)?.apply(self)?;
-        let offset = self.scopes.decl_anon(span)?;
 
         let mut string_slots = Vec::new();
 
@@ -579,11 +573,11 @@ impl<'a> Compiler<'a> {
             ast::ObjectIdent::Anonymous(..) => TypeCheck::Object,
         };
 
-        // Copy the temporary and check that its length matches the pattern and
-        // that it is indeed a vector.
-        self.asm.push(Inst::Copy { offset }, span);
+        let target = load(self, Needs::Value)?.into_address()?;
+
         self.asm.push(
             Inst::MatchObject {
+                target,
                 type_check,
                 slot: keys,
                 exact: !has_rest,
@@ -599,30 +593,20 @@ impl<'a> Compiler<'a> {
 
             match binding {
                 Binding::Binding(_, _, pat) => {
-                    let load = move |c: &mut Self, needs: Needs| {
+                    let binding_load = |c: &mut Self, needs: Needs| {
                         if needs.value() {
-                            c.asm.push(
-                                Inst::ObjectIndexGet {
-                                    target: InstAddress::Offset(offset),
-                                    slot,
-                                },
-                                span,
-                            );
+                            let target = load(c, needs)?.into_address()?;
+                            c.asm.push(Inst::ObjectIndexGet { target, slot }, span);
                         }
 
                         Ok(Asm::top(span))
                     };
 
-                    self.compile_pat(&*pat, false_label, &load)?;
+                    self.compile_pat(&*pat, false_label, &binding_load)?;
                 }
                 Binding::Ident(_, key) => {
-                    self.asm.push(
-                        Inst::ObjectIndexGet {
-                            target: InstAddress::Offset(offset),
-                            slot,
-                        },
-                        span,
-                    );
+                    let target = load(self, Needs::Value)?.into_address()?;
+                    self.asm.push(Inst::ObjectIndexGet { target, slot }, span);
                     self.scopes.decl_var(key, span)?;
                 }
             }

@@ -136,6 +136,17 @@ impl Asm {
         Ok(address)
     }
 
+    /// Access the value.
+    pub(crate) fn into_address(self) -> CompileResult<InstAddress> {
+        let address = match self.kind {
+            AsmKind::Top => InstAddress::Top,
+            AsmKind::Var(var, ..) => InstAddress::Offset(var.offset),
+            AsmKind::Offset(offset) => InstAddress::Offset(offset),
+        };
+
+        Ok(address)
+    }
+
     /// Declare a variable based on the assembled result.
     pub(crate) fn decl_var(&self, c: &mut Compiler, ident: &str) -> CompileResult<()> {
         match self.kind {

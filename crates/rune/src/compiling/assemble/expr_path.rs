@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile `self`.
 impl Assemble for ast::Path {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("Path => {:?}", c.source.source(span));
 
@@ -13,7 +13,7 @@ impl Assemble for ast::Path {
                 var.copy(&mut c.asm, span, "self");
             }
 
-            return Ok(Asm::top(span));
+            return Ok(Value::top(span));
         }
 
         let named = c.convert_path_to_named(self)?;
@@ -21,14 +21,14 @@ impl Assemble for ast::Path {
         if let Needs::Value = needs {
             if let Some(local) = named.as_local() {
                 if let Some(var) = c.scopes.try_get_var(local, c.source_id, c.visitor, span)? {
-                    return Ok(Asm::var(span, *var, local.into()));
+                    return Ok(Value::offset(span, var.offset));
                 }
             }
         }
 
         if let Some(meta) = c.try_lookup_meta(span, &named.item)? {
             c.compile_meta(&meta, span, needs)?;
-            return Ok(Asm::top(span));
+            return Ok(Value::top(span));
         }
 
         if let (Needs::Value, Some(local)) = (needs, named.as_local()) {

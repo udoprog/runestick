@@ -8,7 +8,7 @@ macro_rules! tuple {
 
         $(
         let ($var, _) = it.next().ok_or_else(|| CompileError::new($span, CompileErrorKind::Custom { message: "items ended unexpectedly" }))?;
-        let $var = $var.assemble($c, Needs::Value)?.apply_targeted($c)?;
+        let $var = $var.assemble($c, Needs::Value)?.address($c)?;
         )*
 
         $c.asm.push(
@@ -24,7 +24,7 @@ macro_rules! tuple {
 
 /// Compile a literal tuple.
 impl Assemble for ast::ExprTuple {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprTuple => {:?}", c.source.source(span));
 
@@ -38,7 +38,7 @@ impl Assemble for ast::ExprTuple {
                 4 => tuple!(self, Tuple4, c, span, e1, e2, e3, e4),
                 _ => {
                     for (expr, _) in &self.items {
-                        expr.assemble(c, Needs::Value)?.apply(c)?;
+                        expr.assemble(c, Needs::Value)?.push(c)?;
                         c.scopes.decl_anon(expr.span())?;
                     }
 
@@ -59,6 +59,6 @@ impl Assemble for ast::ExprTuple {
             c.asm.push(Inst::Pop, span);
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

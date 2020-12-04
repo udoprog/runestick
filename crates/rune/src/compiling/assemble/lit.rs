@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a literal value.
 impl Assemble for ast::Lit {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("Lit => {:?}", c.source.source(span));
 

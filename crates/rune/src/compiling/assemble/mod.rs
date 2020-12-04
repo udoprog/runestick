@@ -40,34 +40,30 @@ mod lit_str;
 mod local;
 mod prelude;
 
-use crate::compiling::{CompileResult, Compiler, Needs, Var};
+use crate::compiling::{CompileError, CompileErrorKind, CompileResult, Compiler, Needs};
 use runestick::{CompileMetaCapture, Inst, InstAddress, Span};
 
 #[derive(Debug)]
 #[must_use = "must be consumed to make sure the value is realized"]
-pub(crate) struct Asm {
+pub(crate) struct Value {
     span: Span,
-    kind: AsmKind,
-    decl_anon: bool,
+    kind: ValueKind,
 }
 
-impl Asm {
-    /// Construct an assembly result that leaves the value on the top of the
-    /// stack.
-    pub(crate) fn top(span: Span) -> Self {
+impl Value {
+    /// Construct a value that is not produced at all.
+    pub(crate) fn empty(span: Span) -> Self {
         Self {
             span,
-            kind: AsmKind::Top,
-            decl_anon: false,
+            kind: ValueKind::Empty,
         }
     }
 
-    /// Declare that the assembly resulted in a value in a variable location.
-    pub(crate) fn var(span: Span, var: Var, local: Box<str>) -> Self {
+    /// Construct a value that is produced at the top of the stack.
+    pub(crate) fn top(span: Span) -> Self {
         Self {
             span,
-            kind: AsmKind::Var(var, local),
-            decl_anon: false,
+            kind: ValueKind::Top,
         }
     }
 
@@ -75,31 +71,18 @@ impl Asm {
     pub(crate) fn offset(span: Span, offset: usize) -> Self {
         Self {
             span,
-            kind: AsmKind::Offset(offset),
-            decl_anon: false,
+            kind: ValueKind::Offset(offset),
         }
     }
-}
 
-#[derive(Debug)]
-pub(crate) enum AsmKind {
-    // Result is pushed onto the top of the stack.
-    Top,
-    // Result belongs to the the given stack offset.
-    Var(Var, Box<str>),
-    // Result belongs to the the given stack offset.
-    Offset(usize),
-}
-
-impl Asm {
-    /// Assemble into an instruction.
-    pub(crate) fn apply(self, c: &mut Compiler) -> CompileResult<()> {
+    /// Make sure the value is pushed on top of the stack.
+    pub(crate) fn push(self, c: &mut Compiler) -> CompileResult<()> {
         match self.kind {
-            AsmKind::Top => (),
-            AsmKind::Var(var, local) => {
-                var.copy(&mut c.asm, self.span, format!("var `{}`", local));
+            ValueKind::Empty => {
+                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
             }
-            AsmKind::Offset(offset) => {
+            ValueKind::Top => (),
+            ValueKind::Offset(offset) => {
                 c.asm.push(Inst::Copy { offset }, self.span);
             }
         }
@@ -107,7 +90,20 @@ impl Asm {
         Ok(())
     }
 
-    /// Assemble into an instruction declaring an anonymous variable if appropriate.
+    /// Ignore the produced value.
+    pub(crate) fn ignore(self, c: &mut Compiler) -> CompileResult<()> {
+        match self.kind {
+            ValueKind::Empty => (),
+            ValueKind::Top => {
+                c.asm.push(Inst::Pop, self.span);
+            }
+            ValueKind::Offset(..) => (),
+        }
+
+        Ok(())
+    }
+
+    /// Assemble into an address.
     ///
     /// # Usage
     ///
@@ -123,25 +119,13 @@ impl Asm {
     /// // perform targeted operations.
     /// c.scopes.pop(guard, span)?;
     /// ```
-    pub(crate) fn apply_targeted(self, c: &mut Compiler) -> CompileResult<InstAddress> {
+    pub(crate) fn address(self, _: &mut Compiler) -> CompileResult<InstAddress> {
         let address = match self.kind {
-            AsmKind::Top => {
-                c.scopes.decl_anon(self.span)?;
-                InstAddress::Top
+            ValueKind::Empty => {
+                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
             }
-            AsmKind::Var(var, ..) => InstAddress::Offset(var.offset),
-            AsmKind::Offset(offset) => InstAddress::Offset(offset),
-        };
-
-        Ok(address)
-    }
-
-    /// Access the value.
-    pub(crate) fn into_address(self) -> CompileResult<InstAddress> {
-        let address = match self.kind {
-            AsmKind::Top => InstAddress::Top,
-            AsmKind::Var(var, ..) => InstAddress::Offset(var.offset),
-            AsmKind::Offset(offset) => InstAddress::Offset(offset),
+            ValueKind::Top => InstAddress::Top,
+            ValueKind::Offset(offset) => InstAddress::Offset(offset),
         };
 
         Ok(address)
@@ -150,14 +134,13 @@ impl Asm {
     /// Declare a variable based on the assembled result.
     pub(crate) fn decl_var(&self, c: &mut Compiler, ident: &str) -> CompileResult<()> {
         match self.kind {
-            AsmKind::Top => {
+            ValueKind::Empty => {
+                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
+            }
+            ValueKind::Top => {
                 c.scopes.decl_var(ident, self.span)?;
             }
-            AsmKind::Var(var, ..) => {
-                c.scopes
-                    .decl_var_with_offset(ident, var.offset, self.span)?;
-            }
-            AsmKind::Offset(offset) => {
+            ValueKind::Offset(offset) => {
                 c.scopes.decl_var_with_offset(ident, offset, self.span)?;
             }
         }
@@ -166,12 +149,22 @@ impl Asm {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum ValueKind {
+    /// No value produced.
+    Empty,
+    /// Result produced at top of the stack.
+    Top,
+    /// Result belongs to the the given stack offset.
+    Offset(usize),
+}
+
 /// Compiler trait implemented for things that can be compiled.
 ///
 /// This is the new compiler trait to implement.
 pub(crate) trait Assemble {
     /// Walk the current type with the given item.
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm>;
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value>;
 }
 
 /// Assemble a constant.

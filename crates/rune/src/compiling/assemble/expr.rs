@@ -3,7 +3,7 @@ use crate::query::BuiltInMacro;
 
 /// Compile an expression.
 impl Assemble for ast::Expr {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("Expr => {:?}", c.source.source(span));
 
@@ -57,7 +57,7 @@ impl Assemble for ast::Expr {
                     c.asm.push(Inst::unit(), span);
                 }
 
-                Asm::top(span)
+                Value::top(span)
             }
         };
 

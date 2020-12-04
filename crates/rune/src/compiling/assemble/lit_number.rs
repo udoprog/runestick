@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a literal number.
 impl Assemble for ast::LitNumber {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         use num::ToPrimitive as _;
 
         let span = self.span();
@@ -11,7 +11,7 @@ impl Assemble for ast::LitNumber {
         // NB: don't encode unecessary literal.
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Asm::top(span));
+            return Ok(Value::top(span));
         }
 
         let number = self.resolve(&c.storage, &*c.source)?;
@@ -35,6 +35,6 @@ impl Assemble for ast::LitNumber {
             }
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

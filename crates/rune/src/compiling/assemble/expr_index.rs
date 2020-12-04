@@ -2,14 +2,12 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile an expression.
 impl Assemble for ast::ExprIndex {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprIndex => {:?}", c.source.source(span));
 
-        let guard = c.scopes.push_child(span)?;
-
-        let target = self.target.assemble(c, Needs::Value)?.apply_targeted(c)?;
-        let index = self.index.assemble(c, Needs::Value)?.apply_targeted(c)?;
+        let target = self.target.assemble(c, Needs::Value)?.address(c)?;
+        let index = self.index.assemble(c, Needs::Value)?.address(c)?;
 
         c.asm.push(Inst::IndexGet { index, target }, span);
 
@@ -19,7 +17,6 @@ impl Assemble for ast::ExprIndex {
             c.asm.push(Inst::Pop, span);
         }
 
-        c.scopes.pop(guard, span)?;
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

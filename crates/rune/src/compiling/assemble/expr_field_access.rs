@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile an expr field access, like `<value>.<field>`.
 impl Assemble for ast::ExprFieldAccess {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
 
         // Optimizations!
@@ -14,14 +14,14 @@ impl Assemble for ast::ExprFieldAccess {
         match (&self.expr, &self.expr_field) {
             (ast::Expr::Path(path), ast::ExprField::LitNumber(n)) => {
                 if try_immediate_field_access_optimization(c, span, path, n, needs)? {
-                    return Ok(Asm::top(span));
+                    return Ok(Value::top(span));
                 }
             }
             _ => (),
         }
 
         let guard = c.scopes.push_child(span)?;
-        let target = self.expr.assemble(c, Needs::Value)?.apply_targeted(c)?;
+        let target = self.expr.assemble(c, Needs::Value)?.address(c)?;
 
         // This loop is actually useful.
         #[allow(clippy::never_loop)]
@@ -41,7 +41,7 @@ impl Assemble for ast::ExprFieldAccess {
                     }
 
                     c.scopes.pop(guard, span)?;
-                    return Ok(Asm::top(span));
+                    return Ok(Value::top(span));
                 }
                 ast::ExprField::Ident(ident) => {
                     let field = ident.resolve(&c.storage, &*c.source)?;
@@ -55,7 +55,7 @@ impl Assemble for ast::ExprFieldAccess {
                     }
 
                     c.scopes.pop(guard, span)?;
-                    return Ok(Asm::top(span));
+                    return Ok(Value::top(span));
                 }
             }
         }

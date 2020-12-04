@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a select expression.
 impl Assemble for ast::ExprSelect {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprSelect => {:?}", c.source.source(span));
         let len = self.branches.len();
@@ -34,7 +34,7 @@ impl Assemble for ast::ExprSelect {
         }
 
         for (_, branch) in &branches {
-            branch.expr.assemble(c, Needs::Value)?.apply(c)?;
+            branch.expr.assemble(c, Needs::Value)?.push(c)?;
         }
 
         c.asm.push(Inst::Select { len }, span);
@@ -86,14 +86,14 @@ impl Assemble for ast::ExprSelect {
             }
 
             // Set up a new scope with the binding.
-            branch.body.assemble(c, needs)?.apply(c)?;
+            branch.body.assemble(c, needs)?.push(c)?;
             c.clean_last_scope(span, expected, needs)?;
             c.asm.jump(end_label, span);
         }
 
         if let Some((branch, label)) = default_branch {
             c.asm.label(label)?;
-            branch.body.assemble(c, needs)?.apply(c)?;
+            branch.body.assemble(c, needs)?.push(c)?;
         }
 
         c.asm.label(end_label)?;
@@ -102,6 +102,6 @@ impl Assemble for ast::ExprSelect {
             .pop()
             .ok_or_else(|| CompileError::msg(&span, "missing parent context"))?;
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

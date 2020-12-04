@@ -40,7 +40,7 @@ impl AssembleClosure for ast::ExprClosure {
             c.scopes.total_var_count(span)?
         };
 
-        self.body.assemble(c, Needs::Value)?.apply(c)?;
+        self.body.assemble(c, Needs::Value)?.push(c)?;
 
         if count != 0 {
             c.asm.push(Inst::Clean { count }, span);
@@ -55,13 +55,13 @@ impl AssembleClosure for ast::ExprClosure {
 
 /// Compile a closure expression.
 impl Assemble for ast::ExprClosure {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprClosure => {:?}", c.source.source(span));
 
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Asm::top(span));
+            return Ok(Value::top(span));
         }
 
         let item = c.query.item_for(self)?;
@@ -126,6 +126,6 @@ impl Assemble for ast::ExprClosure {
             );
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

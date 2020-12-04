@@ -2,14 +2,14 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a let expression.
 impl Assemble for ast::ExprLet {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprLet => {:?}", c.source.source(span));
 
         let load = |c: &mut Compiler, needs: Needs| {
             // NB: assignments "move" the value being assigned.
-            self.expr.assemble(c, needs)?.apply(c)?;
-            Ok(Asm::top(span))
+            self.expr.assemble(c, needs)?.push(c)?;
+            Ok(Value::top(span))
         };
 
         let false_label = c.asm.new_label("let_panic");
@@ -36,6 +36,6 @@ impl Assemble for ast::ExprLet {
             c.asm.push(Inst::unit(), span);
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

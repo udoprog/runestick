@@ -2,13 +2,13 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a try expression.
 impl Assemble for ast::ExprTry {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprTry => {:?}", c.source.source(span));
 
         let not_error = c.asm.new_label("try_not_error");
 
-        self.expr.assemble(c, Needs::Value)?.apply(c)?;
+        self.expr.assemble(c, Needs::Value)?.push(c)?;
         c.asm.push(Inst::Dup, span);
         c.asm.push(Inst::IsValue, span);
         c.asm.jump_if(not_error, span);
@@ -26,6 +26,6 @@ impl Assemble for ast::ExprTry {
             c.asm.push(Inst::Pop, span);
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

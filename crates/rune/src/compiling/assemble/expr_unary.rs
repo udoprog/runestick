@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a unary expression.
 impl Assemble for ast::ExprUnary {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprUnary => {:?}", c.source.source(span));
 
@@ -35,11 +35,11 @@ impl Assemble for ast::ExprUnary {
                     }
                 }
 
-                return Ok(Asm::top(span));
+                return Ok(Value::top(span));
             }
         }
 
-        self.expr.assemble(c, Needs::Value)?.apply(c)?;
+        self.expr.assemble(c, Needs::Value)?.push(c)?;
 
         match self.op {
             ast::UnOp::Not { .. } => {
@@ -62,6 +62,6 @@ impl Assemble for ast::ExprUnary {
             c.asm.push(Inst::Pop, span);
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

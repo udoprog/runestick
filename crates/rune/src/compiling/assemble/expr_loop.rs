@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a loop.
 impl Assemble for ast::ExprLoop {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprLoop => {:?}", c.source.source(span));
 
@@ -22,10 +22,10 @@ impl Assemble for ast::ExprLoop {
         });
 
         c.asm.label(continue_label)?;
-        self.body.assemble(c, Needs::None)?.apply(c)?;
+        self.body.assemble(c, Needs::None)?.push(c)?;
         c.asm.jump(continue_label, span);
         c.asm.label(break_label)?;
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

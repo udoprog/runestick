@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a block expression.
 impl Assemble for ast::ExprBlock {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprBlock => {:?}", c.source.source(span));
 
@@ -59,6 +59,6 @@ impl Assemble for ast::ExprBlock {
             }
         };
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

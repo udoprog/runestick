@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a for loop.
 impl Assemble for ast::ExprFor {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprFor => {:?}", c.source.source(span));
 
@@ -14,7 +14,7 @@ impl Assemble for ast::ExprFor {
 
         let (iter_offset, loop_scope_expected) = {
             let loop_scope_expected = c.scopes.push_child(span)?;
-            self.iter.assemble(c, Needs::Value)?.apply(c)?;
+            self.iter.assemble(c, Needs::Value)?.push(c)?;
 
             let iter_offset = c.scopes.decl_anon(span)?;
             c.asm.push_with_comment(
@@ -138,7 +138,7 @@ impl Assemble for ast::ExprFor {
 
         c.compile_pat_offset(&self.binding, binding_offset)?;
 
-        self.body.assemble(c, Needs::None)?.apply(c)?;
+        self.body.assemble(c, Needs::None)?.push(c)?;
         c.clean_last_scope(span, guard, Needs::None)?;
 
         c.asm.jump(continue_label, span);
@@ -161,6 +161,6 @@ impl Assemble for ast::ExprFor {
 
         // NB: breaks produce their own value.
         c.asm.label(break_label)?;
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

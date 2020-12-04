@@ -1,13 +1,13 @@
 use crate::compiling::assemble::prelude::*;
 
 impl Assemble for ast::ExprMatch {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("ExprMatch => {:?}", c.source.source(span));
 
         let expected_scopes = c.scopes.push_child(span)?;
 
-        self.expr.assemble(c, Needs::Value)?.apply(c)?;
+        self.expr.assemble(c, Needs::Value)?.push(c)?;
         // Offset of the expression.
         let offset = c.scopes.decl_anon(span)?;
 
@@ -28,7 +28,7 @@ impl Assemble for ast::ExprMatch {
                     this.asm.push(Inst::Copy { offset }, span);
                 }
 
-                Ok(Asm::top(span))
+                Ok(Value::top(span))
             };
 
             c.compile_pat(&branch.pat, match_false, &load)?;
@@ -39,7 +39,7 @@ impl Assemble for ast::ExprMatch {
                 let scope = c.scopes.child(span)?;
                 let guard = c.scopes.push(scope);
 
-                condition.assemble(c, Needs::Value)?.apply(c)?;
+                condition.assemble(c, Needs::Value)?.push(c)?;
                 c.clean_last_scope(span, guard, Needs::Value)?;
                 let scope = c.scopes.pop(parent_guard, span)?;
 
@@ -74,7 +74,7 @@ impl Assemble for ast::ExprMatch {
             c.asm.label(*label)?;
 
             let expected = c.scopes.push(scope.clone());
-            branch.body.assemble(c, needs)?.apply(c)?;
+            branch.body.assemble(c, needs)?.push(c)?;
             c.clean_last_scope(span, expected, needs)?;
 
             if it.peek().is_some() {
@@ -86,6 +86,6 @@ impl Assemble for ast::ExprMatch {
 
         // pop the implicit scope where we store the anonymous match variable.
         c.clean_last_scope(span, expected_scopes, needs)?;
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

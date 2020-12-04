@@ -2,7 +2,7 @@ use crate::compiling::assemble::prelude::*;
 
 /// Compile a let expression.
 impl Assemble for ast::Local {
-    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Asm> {
+    fn assemble(&self, c: &mut Compiler<'_>, needs: Needs) -> CompileResult<Value> {
         let span = self.span();
         log::trace!("Local => {:?}", c.source.source(span));
 
@@ -32,6 +32,6 @@ impl Assemble for ast::Local {
             c.asm.push(Inst::unit(), span);
         }
 
-        Ok(Asm::top(span))
+        Ok(Value::top(span))
     }
 }

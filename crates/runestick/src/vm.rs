@@ -782,17 +782,15 @@ impl Vm {
 
     /// Implementation of getting a string index on an object-like type.
     fn try_object_slot_index_get(
-        &mut self,
         target: &Value,
+        index: &str,
         string_slot: usize,
     ) -> Result<Option<Value>, VmError> {
-        let index = self.unit.lookup_string(string_slot)?;
-
         Ok(match target {
             Value::Object(object) => {
                 let object = object.borrow_ref()?;
 
-                match object.get(&***index).cloned() {
+                match object.get(index).cloned() {
                     Some(value) => Some(value),
                     None => {
                         return Err(VmError::from(VmErrorKind::ObjectIndexMissing {
@@ -804,7 +802,7 @@ impl Vm {
             Value::Struct(typed_object) => {
                 let typed_object = typed_object.borrow_ref()?;
 
-                match typed_object.get(&***index).cloned() {
+                match typed_object.get(index).cloned() {
                     Some(value) => Some(value),
                     None => {
                         return Err(VmError::from(VmErrorKind::ObjectIndexMissing {
@@ -816,7 +814,7 @@ impl Vm {
             Value::StructVariant(variant_object) => {
                 let variant_object = variant_object.borrow_ref()?;
 
-                match variant_object.data.get(&***index).cloned() {
+                match variant_object.data.get(index).cloned() {
                     Some(value) => Some(value),
                     None => {
                         return Err(VmError::from(VmErrorKind::ObjectIndexMissing {
@@ -825,15 +823,7 @@ impl Vm {
                     }
                 }
             }
-            target => {
-                let hash = index.hash();
-
-                if self.call_field_fn(Protocol::GET, target, hash, ())? {
-                    Some(self.stack.pop()?)
-                } else {
-                    None
-                }
-            }
+            _ => None,
         })
     }
 
@@ -2017,10 +2007,10 @@ impl Vm {
 
     /// Perform an index get operation specialized for tuples.
     #[cfg_attr(feature = "bench", inline(never))]
-    fn op_tuple_index_get(&mut self, index: usize) -> Result<(), VmError> {
-        let value = self.stack.pop()?;
+    fn op_tuple_index_get(&mut self, target: InstAddress, index: usize) -> Result<(), VmError> {
+        let value = self.stack.address_ref(target)?;
 
-        if let Some(value) = Self::try_tuple_like_index_get(&value, index)? {
+        if let Some(value) = Self::try_tuple_like_index_get(&*value, index)? {
             self.stack.push(value);
             return Ok(());
         }
@@ -2045,21 +2035,6 @@ impl Vm {
         }))
     }
 
-    /// Perform an index get operation specialized for tuples.
-    #[cfg_attr(feature = "bench", inline(never))]
-    fn op_tuple_index_get_at(&mut self, offset: usize, index: usize) -> Result<(), VmError> {
-        let value = self.stack.at_offset(offset)?;
-
-        if let Some(value) = Self::try_tuple_like_index_get(value, index)? {
-            self.stack.push(value);
-            return Ok(());
-        }
-
-        Err(VmError::from(VmErrorKind::UnsupportedTupleIndexGet {
-            target: value.type_info()?,
-        }))
-    }
-
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_eq_bool(&mut self, boolean: bool) -> Result<(), VmError> {
         let value = self.stack.pop()?;
@@ -2074,11 +2049,23 @@ impl Vm {
 
     /// Perform a specialized index get operation on an object.
     #[cfg_attr(feature = "bench", inline(never))]
-    fn op_object_index_get(&mut self, string_slot: usize) -> Result<(), VmError> {
-        let target = self.stack.pop()?;
+    fn op_object_index_get(
+        &mut self,
+        target: InstAddress,
+        string_slot: usize,
+    ) -> Result<(), VmError> {
+        let target = self.stack.address_ref(target)?;
+        let index = self.unit.lookup_string(string_slot)?;
 
-        if let Some(value) = self.try_object_slot_index_get(&target, string_slot)? {
+        if let Some(value) = Self::try_object_slot_index_get(&*target, index, string_slot)? {
             self.stack.push(value);
+            return Ok(());
+        }
+
+        let hash = index.hash();
+        let target = target.into_owned();
+
+        if self.call_field_fn(Protocol::GET, &target, hash, ())? {
             return Ok(());
         }
 
@@ -2100,22 +2087,6 @@ impl Vm {
 
         let target = target.type_info()?;
         Err(VmError::from(VmErrorKind::UnsupportedObjectSlotIndexSet {
-            target,
-        }))
-    }
-
-    /// Perform a specialized index get operation on an object.
-    #[cfg_attr(feature = "bench", inline(never))]
-    fn op_object_index_get_at(&mut self, offset: usize, string_slot: usize) -> Result<(), VmError> {
-        let target = self.stack.at_offset(offset)?.clone();
-
-        if let Some(value) = self.try_object_slot_index_get(&target, string_slot)? {
-            self.stack.push(value);
-            return Ok(());
-        }
-
-        let target = target.type_info()?;
-        Err(VmError::from(VmErrorKind::UnsupportedObjectSlotIndexGet {
             target,
         }))
     }
@@ -2813,23 +2784,17 @@ impl Vm {
                 Inst::IndexGet { target, index } => {
                     self.op_index_get(target, index)?;
                 }
-                Inst::TupleIndexGet { index } => {
-                    self.op_tuple_index_get(index)?;
+                Inst::TupleIndexGet { target, index } => {
+                    self.op_tuple_index_get(target, index)?;
                 }
                 Inst::TupleIndexSet { index } => {
                     self.op_tuple_index_set(index)?;
                 }
-                Inst::TupleIndexGetAt { offset, index } => {
-                    self.op_tuple_index_get_at(offset, index)?;
-                }
-                Inst::ObjectIndexGet { slot } => {
-                    self.op_object_index_get(slot)?;
+                Inst::ObjectIndexGet { target, slot } => {
+                    self.op_object_index_get(target, slot)?;
                 }
                 Inst::ObjectIndexSet { slot } => {
                     self.op_object_index_set(slot)?;
-                }
-                Inst::ObjectIndexGetAt { offset, slot } => {
-                    self.op_object_index_get_at(offset, slot)?;
                 }
                 Inst::IndexSet => {
                     self.op_index_set()?;

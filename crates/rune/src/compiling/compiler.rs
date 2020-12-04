@@ -12,8 +12,8 @@ use crate::{
     CompileError, CompileErrorKind, Options, Resolve as _, Spanned, Storage, UnitBuilder, Warnings,
 };
 use runestick::{
-    CompileItem, CompileMeta, CompileMetaKind, ConstValue, Context, Inst, InstValue, Item, Label,
-    Source, Span, TypeCheck,
+    CompileItem, CompileMeta, CompileMetaKind, ConstValue, Context, Inst, InstAddress, InstValue,
+    Item, Label, Source, Span, TypeCheck,
 };
 use std::sync::Arc;
 
@@ -318,7 +318,13 @@ impl<'a> Compiler<'a> {
 
             let load = move |c: &mut Self, needs: Needs| {
                 if needs.value() {
-                    c.asm.push(Inst::TupleIndexGetAt { offset, index }, span);
+                    c.asm.push(
+                        Inst::TupleIndexGet {
+                            target: InstAddress::Offset(offset),
+                            index,
+                        },
+                        span,
+                    );
                 }
 
                 Ok(Asm::top(span))
@@ -428,7 +434,13 @@ impl<'a> Compiler<'a> {
 
             let load = move |c: &mut Self, needs: Needs| {
                 if needs.value() {
-                    c.asm.push(Inst::TupleIndexGetAt { offset, index }, span);
+                    c.asm.push(
+                        Inst::TupleIndexGet {
+                            target: InstAddress::Offset(offset),
+                            index,
+                        },
+                        span,
+                    );
                 }
 
                 Ok(Asm::top(span))
@@ -589,7 +601,13 @@ impl<'a> Compiler<'a> {
                 Binding::Binding(_, _, pat) => {
                     let load = move |c: &mut Self, needs: Needs| {
                         if needs.value() {
-                            c.asm.push(Inst::ObjectIndexGetAt { offset, slot }, span);
+                            c.asm.push(
+                                Inst::ObjectIndexGet {
+                                    target: InstAddress::Offset(offset),
+                                    slot,
+                                },
+                                span,
+                            );
                         }
 
                         Ok(Asm::top(span))
@@ -598,7 +616,13 @@ impl<'a> Compiler<'a> {
                     self.compile_pat(&*pat, false_label, &load)?;
                 }
                 Binding::Ident(_, key) => {
-                    self.asm.push(Inst::ObjectIndexGetAt { offset, slot }, span);
+                    self.asm.push(
+                        Inst::ObjectIndexGet {
+                            target: InstAddress::Offset(offset),
+                            slot,
+                        },
+                        span,
+                    );
                     self.scopes.decl_var(key, span)?;
                 }
             }

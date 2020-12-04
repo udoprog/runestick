@@ -108,6 +108,21 @@ impl Asm {
     }
 
     /// Assemble into an instruction declaring an anonymous variable if appropriate.
+    ///
+    /// # Usage
+    ///
+    /// In order to use this, you should declare a child scope that you control.
+    /// The targeted operation will clean up any values on the stack if it
+    /// references e.g. stack top values, but you must make sure that the stack
+    /// state in the compiler is balanced by giving it a scope to operate in.
+    ///
+    /// Clean up is done with:
+    ///
+    /// ```rust,ignore
+    /// let guard = c.scopes.push_child(span)?;
+    /// // perform targeted operations.
+    /// c.scopes.pop(guard, span)?;
+    /// ```
     pub(crate) fn apply_targeted(self, c: &mut Compiler) -> CompileResult<InstAddress> {
         let address = match self.kind {
             AsmKind::Top => {

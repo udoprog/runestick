@@ -20,7 +20,8 @@ impl Assemble for ast::ExprFieldAccess {
             _ => (),
         }
 
-        self.expr.assemble(c, Needs::Value)?.apply(c)?;
+        let guard = c.scopes.push_child(span)?;
+        let target = self.expr.assemble(c, Needs::Value)?.apply_targeted(c)?;
 
         // This loop is actually useful.
         #[allow(clippy::never_loop)]
@@ -32,26 +33,28 @@ impl Assemble for ast::ExprFieldAccess {
                         _ => break,
                     };
 
-                    c.asm.push(Inst::TupleIndexGet { index }, span);
+                    c.asm.push(Inst::TupleIndexGet { target, index }, span);
 
                     if !needs.value() {
                         c.warnings.not_used(c.source_id, span, c.context());
                         c.asm.push(Inst::Pop, span);
                     }
 
+                    c.scopes.pop(guard, span)?;
                     return Ok(Asm::top(span));
                 }
                 ast::ExprField::Ident(ident) => {
                     let field = ident.resolve(&c.storage, &*c.source)?;
                     let slot = c.unit.new_static_string(span, field.as_ref())?;
 
-                    c.asm.push(Inst::ObjectIndexGet { slot }, span);
+                    c.asm.push(Inst::ObjectIndexGet { target, slot }, span);
 
                     if !needs.value() {
                         c.warnings.not_used(c.source_id, span, c.context());
                         c.asm.push(Inst::Pop, span);
                     }
 
+                    c.scopes.pop(guard, span)?;
                     return Ok(Asm::top(span));
                 }
             }
@@ -95,8 +98,8 @@ fn try_immediate_field_access_optimization(
         };
 
     this.asm.push(
-        Inst::TupleIndexGetAt {
-            offset: var.offset,
+        Inst::TupleIndexGet {
+            target: InstAddress::Offset(var.offset),
             index,
         },
         span,

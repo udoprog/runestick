@@ -200,6 +200,22 @@ impl Scope {
         Ok(None)
     }
 
+    /// Access the variable with the given name mutably.
+    fn get_mut(&mut self, name: &str, span: Span) -> CompileResult<Option<&mut Var>> {
+        if let Some(var) = self.locals.get_mut(name) {
+            if let Some(moved_at) = var.moved_at {
+                return Err(CompileError::new(
+                    span,
+                    CompileErrorKind::VariableMoved { moved_at },
+                ));
+            }
+
+            return Ok(Some(var));
+        }
+
+        Ok(None)
+    }
+
     /// Access the variable with the given name.
     fn take(&mut self, name: &str, span: Span) -> CompileResult<Option<&Var>> {
         if let Some(var) = self.locals.get_mut(name) {
@@ -259,6 +275,28 @@ impl Scopes {
         Ok(None)
     }
 
+    /// Try to get the local with the given name. Returns `None` if it's
+    /// missing.
+    pub(crate) fn try_get_var_mut(
+        &mut self,
+        name: &str,
+        source_id: SourceId,
+        visitor: &mut dyn CompileVisitor,
+        span: Span,
+    ) -> CompileResult<Option<&mut Var>> {
+        log::trace!("get var: {}", name);
+
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name, span)? {
+                log::trace!("found var: {} => {:?}", name, var);
+                visitor.visit_variable_use(source_id, var, span);
+                return Ok(Some(var));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Try to take the local with the given name. Returns `None` if it's
     /// missing.
     pub(crate) fn try_take_var(
@@ -290,6 +328,25 @@ impl Scopes {
         span: Span,
     ) -> CompileResult<&Var> {
         match self.try_get_var(name, source_id, visitor, span)? {
+            Some(var) => Ok(var),
+            None => Err(CompileError::new(
+                span,
+                CompileErrorKind::MissingLocal {
+                    name: name.to_owned(),
+                },
+            )),
+        }
+    }
+
+    /// Get the local with the given variable mutably.
+    pub(crate) fn get_var_mut(
+        &mut self,
+        name: &str,
+        source_id: SourceId,
+        visitor: &mut dyn CompileVisitor,
+        span: Span,
+    ) -> CompileResult<&mut Var> {
+        match self.try_get_var_mut(name, source_id, visitor, span)? {
             Some(var) => Ok(var),
             None => Err(CompileError::new(
                 span,

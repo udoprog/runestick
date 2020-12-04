@@ -6,7 +6,7 @@ impl Assemble for ast::Local {
         let span = self.span();
         log::trace!("Local => {:?}", c.source.source(span));
 
-        let load = |c: &mut Compiler, needs: Needs| Ok(self.expr.assemble(c, needs)?);
+        let load = |c: &mut Compiler, needs: Needs| self.expr.assemble(c, needs);
 
         let false_label = c.asm.new_label("let_panic");
 

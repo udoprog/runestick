@@ -8,17 +8,32 @@ impl Assemble for ast::ExprAssign {
 
         let supported = match &self.lhs {
             // <var> = <value>
-            ast::Expr::Path(path) if path.rest.is_empty() => {
-                self.rhs.assemble(c, Needs::Value)?.apply(c)?;
+            ast::Expr::Path(path) => {
+                let span = path.span();
 
-                let segment = path
-                    .first
-                    .try_as_ident()
-                    .ok_or_else(|| CompileError::msg(path, "unsupported path"))?;
-                let ident = segment.resolve(c.storage, &*c.source)?;
-                let var = c.scopes.get_var(&*ident, c.source_id, c.visitor, span)?;
-                c.asm.push(Inst::Replace { offset: var.offset }, span);
-                true
+                if let Some(ident) = path.try_as_ident() {
+                    let guard = c.scopes.push_child(span)?;
+                    let target = self.rhs.assemble(c, Needs::Value)?.apply_targeted(c)?;
+                    let ident = ident.resolve(c.storage, &*c.source)?;
+
+                    let var = c
+                        .scopes
+                        .get_var_mut(&*ident, c.source_id, c.visitor, span)?;
+
+                    match target {
+                        InstAddress::Top => {
+                            c.asm.push(Inst::Replace { offset: var.offset }, span);
+                        }
+                        InstAddress::Offset(offset) => {
+                            var.offset = offset;
+                        }
+                    }
+
+                    c.scopes.pop(guard, span)?;
+                    true
+                } else {
+                    false
+                }
             }
             // <expr>.<field> = <value>
             ast::Expr::FieldAccess(field_access) => {

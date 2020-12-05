@@ -7,7 +7,7 @@ macro_rules! tuple {
         $(
         let ($var, _) = it.next().ok_or_else(|| CompileError::new($span, CompileErrorKind::Custom { message: "items ended unexpectedly" }))?;
         let $var = $var.assemble($c, Needs::Value)?;
-        let $var = $var.consume_into_address($c)?;
+        let $var = $var.consuming_address($c)?;
         )*
 
         $c.asm.push(

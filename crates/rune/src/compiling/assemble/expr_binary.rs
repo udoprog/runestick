@@ -31,9 +31,6 @@ impl Assemble for ast::ExprBinary {
         let a = self.lhs.assemble(c, Needs::Value)?;
         let b = self.rhs.assemble(c, rhs_needs_of(self.op))?;
 
-        let b = b.consume_into_address(c)?;
-        let a = a.consume_into_address(c)?;
-
         let op = match self.op {
             ast::BinOp::Eq => InstOp::Eq,
             ast::BinOp::Neq => InstOp::Neq,
@@ -64,16 +61,20 @@ impl Assemble for ast::ExprBinary {
             }
         };
 
+        let b = b.consuming_address(c)?;
+        let a = a.consuming_address(c)?;
         c.asm.push(Inst::Op { op, a, b }, span);
+        let value = Value::unnamed(span, c);
 
         // NB: we put it here to preserve the call in case it has side effects.
         // But if we don't need the value, then pop it from the stack.
         if !needs.value() {
+            value.pop(c)?;
             c.asm.push(Inst::Pop, span);
             return Ok(Value::empty(span));
         }
 
-        Ok(Value::unnamed(span, c))
+        Ok(value)
     }
 }
 

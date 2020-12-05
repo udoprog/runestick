@@ -1,5 +1,5 @@
 use crate::collections::HashMap;
-use crate::compiling::{Assembly, Compiler};
+use crate::compiling::{Assembly, Compiler, Value};
 use crate::{CompileError, CompileErrorKind, CompileResult, CompileVisitor};
 use runestick::{Inst, SourceId, Span};
 use std::fmt;
@@ -36,14 +36,20 @@ pub struct Var {
     /// Slot offset from the current stack frame.
     pub(crate) offset: usize,
     /// Token assocaited with the variable.
-    pub(crate) span: Span,
+    pub span: Span,
     /// Variable has been taken at the given position.
     moved_at: Option<Span>,
+    /// A declared variable.
+    pub(crate) declared: bool,
 }
 
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {:?})", self.offset, self.span)
+        write!(
+            f,
+            "({}, {:?}, declared: {})",
+            self.offset, self.span, self.declared
+        )
     }
 }
 
@@ -98,14 +104,14 @@ impl Scope {
         }
     }
 
-    /// Test the length of the scope.
-    pub(crate) fn len(&self) -> usize {
-        self.stack.len()
-    }
-
     /// Test if the scope is empty.
     pub(crate) fn is_empty(&self) -> bool {
         self.stack.is_empty()
+    }
+
+    /// Test if scope contains the given id.
+    pub(crate) fn contains(&self, id: VarId) -> bool {
+        id.0 >= self.head
     }
 }
 
@@ -132,6 +138,20 @@ impl Scopes {
             locals: HashMap::new(),
             head: self.stack.len(),
             stack: Vec::new(),
+        }
+    }
+
+    /// Total stack size.
+    pub(crate) fn totals(&self) -> usize {
+        self.stack.len()
+    }
+
+    /// Get the number of variables local to the current scope.
+    pub(crate) fn locals(&self) -> usize {
+        if let Some(scope) = self.scopes.last() {
+            self.stack.len() - scope.head
+        } else {
+            self.stack.len()
         }
     }
 
@@ -381,6 +401,7 @@ impl Scopes {
             offset,
             span,
             moved_at: None,
+            declared: false,
         };
 
         self.stack.push(local);
@@ -449,6 +470,7 @@ impl Scopes {
             offset,
             span,
             moved_at: None,
+            declared: false,
         });
 
         Ok(id)
@@ -466,9 +488,12 @@ impl Scopes {
     /// scope can be added back to the stack.
     pub(crate) fn push_scope(&mut self, span: Span, mut scope: Scope) -> CompileResult<ScopeGuard> {
         if scope.head != self.stack.len() {
-            return Err(CompileError::msg(
+            return Err(CompileError::new(
                 span,
-                "pushed scope head does not match length of scope",
+                CompileErrorKind::ScopePushMismatch {
+                    head: scope.head,
+                    stack: self.stack.len(),
+                },
             ));
         }
 
@@ -510,7 +535,7 @@ impl Scopes {
 
     /// Gets the stack offset for the given variable id.
     pub(crate) fn offset_of(&self, span: Span, id: VarId) -> CompileResult<VarOffset> {
-        let var = self.var_of(span, id)?;
+        let var = self.var(span, id)?;
 
         Ok(if var.offset + 1 == self.stack.len() {
             VarOffset::Top
@@ -519,25 +544,28 @@ impl Scopes {
         })
     }
 
-    /// Gets the stack offset for the given variable id.
-    pub(crate) fn var_of(&self, span: Span, id: VarId) -> CompileResult<&Var> {
+    /// Gets the variable associated with the given id.
+    pub(crate) fn var(&self, span: Span, id: VarId) -> CompileResult<&Var> {
         self.stack
             .get(id.0)
             .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))
     }
 
-    /// Total stack size.
-    pub(crate) fn totals(&self) -> usize {
-        self.stack.len()
+    /// Gets a mutable variable associated the given id.
+    pub(crate) fn var_mut(&mut self, span: Span, id: VarId) -> CompileResult<&mut Var> {
+        self.stack
+            .get_mut(id.0)
+            .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))
     }
 
-    /// Get the number of variables local to the current scope.
-    pub(crate) fn locals(&self) -> usize {
-        if let Some(scope) = self.scopes.last() {
-            self.stack.len() - scope.head
-        } else {
-            self.stack.len()
-        }
+    /// Test if the last scope contains the given variable.
+    pub(crate) fn scope_contains(&self, span: Span, id: VarId) -> CompileResult<bool> {
+        Ok(self.last(span)?.contains(id))
+    }
+
+    /// Test if the given var is on top of the stack.
+    pub(crate) fn is_stack_top(&self, id: VarId) -> bool {
+        id.0 + 1 == self.stack.len()
     }
 
     /// Get the local with the given name.
@@ -594,18 +622,30 @@ impl ScopeGuard {
         self,
         span: Span,
         c: &mut Compiler<'_>,
-        transfer: usize,
+        value: Value,
     ) -> CompileResult<Scope> {
+        let stack = c.scopes.stack.len();
         let mut scope = self.pop(span, c)?;
 
-        if scope.stack.len() < transfer {
-            return Err(CompileError::msg(
-                span,
-                "not enough variables in popped scope to transfer",
-            ));
+        if let Some(id) = value.try_into_var() {
+            if !scope.contains(id) {
+                return Ok(scope);
+            }
+
+            if id.0 + 1 != stack {
+                return Err(CompileError::new(
+                    span,
+                    CompileErrorKind::VarTransferNotTop { id, stack },
+                ));
+            }
+
+            let var = scope.stack.pop().ok_or_else(|| {
+                CompileError::msg(span, "tried to transfer value from empty sub stack")
+            })?;
+
+            c.scopes.stack.push(var);
         }
 
-        c.scopes.stack.extend(scope.stack.drain(..transfer));
         Ok(scope)
     }
 }

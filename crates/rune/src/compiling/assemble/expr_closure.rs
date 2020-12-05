@@ -32,8 +32,7 @@ impl AssembleClosure for ast::ExprClosure {
 
         // NB: will be popped by return values.
         let ret = self.body.assemble(c, Needs::Value)?;
-        c.custom_clean(span, Needs::Value, c.scopes.totals())?;
-
+        c.custom_clean(span, ret, c.scopes.totals())?;
         ret.pop(c)?;
         c.asm.push(Inst::Return, span);
         Ok(())

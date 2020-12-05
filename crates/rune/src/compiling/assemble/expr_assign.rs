@@ -12,10 +12,7 @@ impl Assemble for ast::ExprAssign {
                 let span = path.span();
 
                 if let Some(ident) = path.try_as_ident() {
-                    let target = self
-                        .rhs
-                        .assemble(c, Needs::Value)?
-                        .consume_into_address(c)?;
+                    let target = self.rhs.assemble(c, Needs::Value)?.consuming_address(c)?;
                     let ident = ident.resolve(c.storage, &*c.source)?;
 
                     let var = c

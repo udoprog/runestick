@@ -34,18 +34,18 @@ impl AssembleFn for ast::ItemFn {
         }
 
         if self.body.statements.is_empty() {
-            c.locals_clean(span, Needs::None)?;
+            c.locals_clean(span, Value::empty(span))?;
             c.asm.push(Inst::ReturnUnit, span);
             return Ok(());
         }
 
         if !self.body.produces_nothing() {
-            self.body.assemble(c, Needs::Value)?;
-            c.locals_clean(span, Needs::Value)?;
+            let value = self.body.assemble(c, Needs::Value)?;
+            c.locals_clean(span, value)?;
             c.asm.push(Inst::Return, span);
         } else {
-            self.body.assemble(c, Needs::None)?;
-            c.locals_clean(span, Needs::None)?;
+            let value = self.body.assemble(c, Needs::None)?;
+            c.locals_clean(span, value)?;
             c.asm.push(Inst::ReturnUnit, span);
         }
 

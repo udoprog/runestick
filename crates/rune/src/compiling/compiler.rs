@@ -31,15 +31,6 @@ impl Needs {
     pub(crate) fn value(self) -> bool {
         matches!(self, Self::Type | Self::Value)
     }
-
-    /// How many values that needs to be transfered to satisfy this need.
-    pub(crate) fn transfer(self) -> usize {
-        if self.value() {
-            1
-        } else {
-            0
-        }
-    }
 }
 
 pub(crate) struct Compiler<'a> {
@@ -112,52 +103,69 @@ impl<'a> Compiler<'a> {
     /// Clean up local according to needs.
     ///
     /// This assumes all values are registered in the scope.
-    pub(crate) fn locals_clean(&mut self, span: Span, needs: Needs) -> CompileResult<()> {
-        self.custom_clean(span, needs, self.scopes.locals())
+    pub(crate) fn locals_clean(&mut self, span: Span, value: Value) -> CompileResult<()> {
+        self.custom_clean(span, value, self.scopes.locals())
     }
 
     /// Perform a custom clean.
     pub(crate) fn custom_clean(
         &mut self,
         span: Span,
-        needs: Needs,
+        value: Value,
         count: usize,
     ) -> CompileResult<()> {
-        if needs.value() {
-            // NB: top of the stack needs to be preserved.
-            let count = count.checked_sub(1).ok_or_else(|| {
-                CompileError::new(
-                    span,
-                    CompileErrorKind::Custom {
-                        message: "ran out of locals to clean",
-                    },
-                )
-            })?;
-
-            match count {
-                0 => (),
-                count => {
-                    self.asm.push(Inst::Clean { count }, span);
+        if let Some(id) = value.try_into_var() {
+            if self.scopes.scope_contains(span, id)? {
+                // NB: cleaning can only clean up the var that is on the top of the stack.
+                if !self.scopes.is_stack_top(id) {
+                    return Err(CompileError::new(
+                        span,
+                        CompileErrorKind::VarTransferNotTop {
+                            id,
+                            stack: self.scopes.totals(),
+                        },
+                    ));
                 }
+
+                // NB: top of the stack needs to be preserved.
+                let count = count.checked_sub(1).ok_or_else(|| {
+                    CompileError::new(
+                        span,
+                        CompileErrorKind::Custom {
+                            message: "ran out of locals to clean",
+                        },
+                    )
+                })?;
+
+                match count {
+                    0 => (),
+                    count => {
+                        self.asm.push(Inst::Clean { count }, span);
+                    }
+                }
+
+                let (top, _) = self.scopes.stack_pop(span)?;
+                self.scopes.pop(span, count)?;
+                self.scopes.stack_push(top);
+                return Ok(());
             }
 
-            let (top, _) = self.scopes.stack_pop(span)?;
-            self.scopes.pop(span, count)?;
-            self.scopes.stack_push(top);
-        } else {
-            match count {
-                0 => (),
-                1 => {
-                    self.asm.push(Inst::Pop, span);
-                }
-                count => {
-                    self.asm.push(Inst::PopN { count }, span);
-                }
-            }
-
-            self.scopes.pop(span, count)?;
+            // NB: if top scope doesn't contain the transferred variable, it
+            // means it's referencing something in an outer scope. Just fall
+            // through to popping then.
         }
 
+        match count {
+            0 => (),
+            1 => {
+                self.asm.push(Inst::Pop, span);
+            }
+            count => {
+                self.asm.push(Inst::PopN { count }, span);
+            }
+        }
+
+        self.scopes.pop(span, count)?;
         Ok(())
     }
 
@@ -286,7 +294,8 @@ impl<'a> Compiler<'a> {
             ast::Condition::Expr(expr) => {
                 let span = expr.span();
 
-                expr.assemble(self, Needs::Value)?.pop(self)?;
+                let expr = expr.assemble(self, Needs::Value)?;
+                expr.pop(self)?;
                 self.asm.jump_if(then_label, span);
 
                 Ok(self.scopes.scope())

@@ -92,7 +92,7 @@ impl Value {
     /// Get the offset of the value.
     pub(crate) fn offset(self, c: &mut Compiler<'_>) -> CompileResult<usize> {
         let id = self.into_var()?;
-        Ok(c.scopes.var_of(self.span, id)?.offset)
+        Ok(c.scopes.var(self.span, id)?.offset)
     }
 
     /// Ignore the produced value.
@@ -161,14 +161,21 @@ impl Value {
 
     /// Assemble into an address  with the intent of immediately consuming the
     /// stack value if its at the top.
-    pub(crate) fn consume_into_address(self, c: &mut Compiler) -> CompileResult<InstAddress> {
+    pub(crate) fn consuming_address(self, c: &mut Compiler) -> CompileResult<InstAddress> {
         let id = self.into_var()?;
+        let var = *c.scopes.var(self.span, id)?;
 
         let address = match c.scopes.offset_of(self.span, id)? {
             VarOffset::Offset(offset) => InstAddress::Offset(offset),
             VarOffset::Top => {
-                c.scopes.stack_pop(self.span)?;
-                InstAddress::Top
+                // Don't consume declared values. These are values which have
+                // been given a name somewhere.
+                if var.declared {
+                    InstAddress::Last
+                } else {
+                    c.scopes.stack_pop(self.span)?;
+                    InstAddress::Top
+                }
             }
         };
 
@@ -178,10 +185,21 @@ impl Value {
     /// Declare the current value as a variable with the given name.
     pub(crate) fn decl(self, c: &mut Compiler, name: &str) -> CompileResult<()> {
         let id = self.into_var()?;
+        let var = c.scopes.var_mut(self.span, id)?;
+        var.declared = true;
         c.scopes.named_with_id(name, id, self.span)?;
         Ok(())
     }
 
+    /// Tro to convert into var.
+    pub(crate) fn try_into_var(self) -> Option<VarId> {
+        match self.kind {
+            ValueKind::Var(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Forcibly convert into var.
     fn into_var(self) -> CompileResult<VarId> {
         match self.kind {
             ValueKind::Unreachable => {

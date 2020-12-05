@@ -57,8 +57,8 @@ impl Assemble for ast::ExprMatch {
             c.asm.label(label)?;
 
             let guard = c.scopes.push_scope(span, scope)?;
-            branch.body.assemble(c, needs)?;
-            c.locals_clean(span, needs)?;
+            let value = branch.body.assemble(c, needs)?;
+            c.locals_clean(span, value)?;
             let scope = guard.pop(span, c)?;
             debug_assert!(scope.is_empty(), "scope used in a branch should be empty");
 
@@ -68,7 +68,7 @@ impl Assemble for ast::ExprMatch {
         }
 
         // Clean up temp loop variable.
-        c.locals_clean(span, Needs::None)?;
+        c.locals_clean(span, Value::empty(span))?;
         guard.pop(span, c)?;
         c.asm.label(end_label)?;
 

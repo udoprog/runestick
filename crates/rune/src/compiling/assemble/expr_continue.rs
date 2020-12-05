@@ -29,7 +29,7 @@ impl Assemble for ast::ExprContinue {
             .checked_sub(last_loop.continue_var_count)
             .ok_or_else(|| CompileError::msg(&span, "var count should be larger"))?;
 
-        c.custom_clean(span, Needs::None, vars)?;
+        c.custom_clean(span, Value::empty(span), vars)?;
         c.asm.jump(last_loop.continue_label, span);
         Ok(Value::unreachable(span))
     }

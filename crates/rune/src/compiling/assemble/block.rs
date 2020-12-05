@@ -16,10 +16,9 @@ impl AssembleClosure for ast::Block {
             c.scopes.named(&capture.ident, span)?;
         }
 
-        self.assemble(c, Needs::Value)?.pop(c)?;
-        c.locals_clean(span, Needs::Value)?;
-
-        let scope = guard.transfer(span, c, 1)?;
+        let value = self.assemble(c, Needs::Value)?;
+        c.locals_clean(span, value)?;
+        let scope = guard.transfer(span, c, value)?;
         debug_assert!(scope.is_empty());
 
         c.asm.push(Inst::Return, span);
@@ -76,14 +75,9 @@ impl Assemble for ast::Block {
             value
         };
 
-        c.locals_clean(span, needs)?;
-
-        let scope = guard.transfer(span, c, needs.transfer())?;
-        debug_assert!(
-            scope.is_empty(),
-            "scope should be empty, but was: {:?}",
-            scope
-        );
+        c.locals_clean(span, value)?;
+        let scope = guard.transfer(span, c, value)?;
+        debug_assert!(scope.is_empty());
 
         c.contexts
             .pop()

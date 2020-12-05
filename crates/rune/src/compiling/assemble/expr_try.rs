@@ -8,13 +8,13 @@ impl Assemble for ast::ExprTry {
 
         let not_error = c.asm.new_label("try_not_error");
 
-        self.expr.assemble(c, Needs::Value)?.pop(c)?;
-        c.asm.push(Inst::Dup, span);
+        let expr = self.expr.assemble(c, Needs::Value)?;
+        expr.copy(c)?;
         c.asm.push(Inst::IsValue, span);
         c.asm.jump_if(not_error, span);
 
         // Clean up all locals so far and return from the current function.
-        c.custom_clean(span, Needs::Value, c.scopes.totals())?;
+        c.custom_clean(span, expr, c.scopes.totals())?;
         c.asm.push(Inst::Return, span);
 
         c.asm.label(not_error)?;

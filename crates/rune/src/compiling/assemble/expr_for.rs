@@ -105,7 +105,7 @@ impl Assemble for ast::ExprFor {
 
         self.body.assemble(c, Needs::None)?.ignore(c)?;
 
-        c.locals_clean(span, Needs::None)?;
+        c.locals_clean(span, Value::empty(span))?;
         guard.pop(span, c)?;
 
         c.asm.jump(continue_label, span);
@@ -115,7 +115,7 @@ impl Assemble for ast::ExprFor {
         let offset = iter_var.offset(c)?;
         c.asm.push(Inst::Drop { offset }, span);
 
-        c.locals_clean(span, Needs::None)?;
+        c.locals_clean(span, Value::empty(span))?;
 
         // NB: breaks produce their own value.
         c.asm.label(break_label)?;

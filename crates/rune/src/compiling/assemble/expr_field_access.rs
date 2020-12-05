@@ -22,10 +22,7 @@ impl Assemble for ast::ExprFieldAccess {
             _ => (),
         }
 
-        let target = self
-            .expr
-            .assemble(c, Needs::Value)?
-            .consume_into_address(c)?;
+        let target = self.expr.assemble(c, Needs::Value)?.consuming_address(c)?;
 
         // This loop is actually useful.
         #[allow(clippy::never_loop)]

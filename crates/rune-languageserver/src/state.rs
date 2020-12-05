@@ -575,7 +575,7 @@ impl rune::CompileVisitor for Visitor<'_> {
         let definition = Definition {
             kind: DefinitionKind::Local,
             source: CompileSource {
-                span: var.span(),
+                span: var.span,
                 path: None,
                 source_id,
             },

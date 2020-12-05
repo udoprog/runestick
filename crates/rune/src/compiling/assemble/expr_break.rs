@@ -52,14 +52,14 @@ impl Assemble for ast::ExprBreak {
 
         if last_loop.needs.value() {
             if let Some(value) = value {
-                c.custom_clean(span, Needs::Value, vars)?;
+                c.custom_clean(span, value, vars)?;
                 value.pop(c)?;
             } else {
-                c.custom_clean(span, Needs::None, vars)?;
+                c.custom_clean(span, Value::empty(span), vars)?;
                 c.asm.push(Inst::unit(), span);
             }
         } else {
-            c.custom_clean(span, Needs::None, vars)?;
+            c.custom_clean(span, Value::empty(span), vars)?;
         }
 
         c.asm.jump(last_loop.break_label, span);

@@ -10,6 +10,7 @@ impl Assemble for ast::ExprIf {
         let end_label = c.asm.new_label("if_end");
 
         let mut branches = Vec::new();
+
         let then_scope = c.compile_condition(&self.condition, then_label)?;
 
         for branch in &self.expr_else_ifs {
@@ -18,15 +19,14 @@ impl Assemble for ast::ExprIf {
             branches.push((branch, label, scope));
         }
 
-        // use fallback as fall through.
+        // Use fallback as fallthrough.
         if let Some(fallback) = &self.expr_else {
-            fallback.block.assemble(c, needs)?;
-        } else {
-            // NB: if we must produce a value and there is no fallback branch,
-            // encode the result of the statement as a unit.
-            if needs.value() {
-                c.asm.push(Inst::unit(), span);
-            }
+            let guard = c.scopes.push();
+            let value = fallback.block.assemble(c, needs)?;
+            c.locals_clean(span, value)?;
+            let _ = guard.pop(span, c)?;
+        } else if needs.value() {
+            c.asm.push(Inst::unit(), span);
         }
 
         c.asm.jump(end_label, span);
@@ -34,10 +34,9 @@ impl Assemble for ast::ExprIf {
         c.asm.label(then_label)?;
 
         let guard = c.scopes.push_scope(span, then_scope)?;
-        self.block.assemble(c, needs)?;
-        c.locals_clean(span, needs)?;
-        let scope = guard.pop(span, c)?;
-        debug_assert!(scope.len() == needs.transfer());
+        let value = self.block.assemble(c, needs)?;
+        c.locals_clean(span, value)?;
+        let _ = guard.pop(span, c)?;
 
         if !self.expr_else_ifs.is_empty() {
             c.asm.jump(end_label, span);
@@ -53,10 +52,9 @@ impl Assemble for ast::ExprIf {
             // NB: we do some temporary scope switcheroo here, since the scopes
             // have been prepared beforehand.
             let guard = c.scopes.push_scope(span, scope)?;
-            branch.block.assemble(c, needs)?;
-            c.locals_clean(span, needs)?;
-            let scope = guard.pop(span, c)?;
-            debug_assert!(scope.len() == needs.transfer());
+            let value = branch.block.assemble(c, needs)?;
+            c.locals_clean(span, value)?;
+            let _ = guard.pop(span, c)?;
 
             if it.peek().is_some() {
                 c.asm.jump(end_label, span);

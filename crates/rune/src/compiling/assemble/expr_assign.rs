@@ -15,16 +15,21 @@ impl Assemble for ast::ExprAssign {
                     let target = self.rhs.assemble(c, Needs::Value)?.consuming_address(c)?;
                     let ident = ident.resolve(c.storage, &*c.source)?;
 
-                    let var = c
+                    let (id, var) = c
                         .scopes
                         .get_var_mut(&*ident, c.source_id, c.visitor, span)?;
 
                     match target {
                         InstAddress::Top | InstAddress::Last => {
-                            c.asm.push(Inst::Replace { offset: var.offset }, span);
+                            c.asm.push(
+                                Inst::Replace {
+                                    offset: var.offset.translate(id),
+                                },
+                                span,
+                            );
                         }
                         InstAddress::Offset(offset) => {
-                            var.offset = offset;
+                            var.offset = VarOffset::Offset(offset);
                         }
                     }
 

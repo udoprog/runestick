@@ -282,8 +282,6 @@ pub enum CompileErrorKind {
     VariableMoved { moved_at: Span },
     #[error("variable by id `{id}` missing")]
     VarIdMissing { id: VarId },
-    #[error("trying to transfer var `{id}` that is not on top of the stack (0..{stack})")]
-    VarTransferNotTop { id: VarId, stack: usize },
     #[error("pushed scope head `{head}` does not match stack `{stack}`")]
     ScopePushMismatch { head: usize, stack: usize },
 }

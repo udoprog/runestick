@@ -35,6 +35,7 @@ impl Assemble for ast::ExprIf {
 
         let guard = c.scopes.push_scope(span, then_scope)?;
         let value = self.block.assemble(c, needs)?;
+        value.copy(c)?;
         c.locals_clean(span, value)?;
         let _ = guard.pop(span, c)?;
 

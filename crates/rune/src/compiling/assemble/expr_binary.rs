@@ -145,9 +145,9 @@ fn compile_assign_binop(
                 .try_as_ident()
                 .ok_or_else(|| CompileError::msg(path, "unsupported path segment"))?;
             let ident = segment.resolve(c.storage, &*c.source)?;
-            let var = c.scopes.get_var(&*ident, c.source_id, c.visitor, span)?;
+            let (id, var) = c.scopes.get_var(&*ident, c.source_id, c.visitor, span)?;
 
-            Some(InstTarget::Offset(var.offset))
+            Some(InstTarget::Offset(var.offset.translate(id)))
         }
         // <expr>.<field> <op> <value>
         ast::Expr::FieldAccess(field_access) => {

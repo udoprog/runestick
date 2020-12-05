@@ -16,11 +16,30 @@ impl fmt::Debug for VarId {
 
 /// A calculated variable offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum VarOffset {
+pub enum CalculatedOffset {
     /// Variable is on the top of the stack.
     Top,
     /// Variable is at the given offset.
     Offset(usize),
+}
+
+/// The offset of a variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VarOffset {
+    /// Variable references its own location on the stack.
+    Stack,
+    /// Variable references a specific location on the stack.
+    Offset(usize),
+}
+
+impl VarOffset {
+    /// Translate offset from the given ID.
+    pub fn translate(self, id: VarId) -> usize {
+        match self {
+            Self::Stack => id.0,
+            Self::Offset(offset) => offset,
+        }
+    }
 }
 
 impl fmt::Display for VarId {
@@ -34,7 +53,7 @@ impl fmt::Display for VarId {
 #[derive(Clone, Copy)]
 pub struct Var {
     /// Slot offset from the current stack frame.
-    pub(crate) offset: usize,
+    pub(crate) offset: VarOffset,
     /// Token assocaited with the variable.
     pub span: Span,
     /// Variable has been taken at the given position.
@@ -47,7 +66,7 @@ impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "({}, {:?}, declared: {})",
+            "({:?}, {:?}, declared: {})",
             self.offset, self.span, self.declared
         )
     }
@@ -55,13 +74,13 @@ impl fmt::Debug for Var {
 
 impl Var {
     /// Copy the declared variable.
-    pub(crate) fn copy<C>(&self, asm: &mut Assembly, span: Span, comment: C)
+    pub(crate) fn copy<C>(&self, id: VarId, asm: &mut Assembly, span: Span, comment: C)
     where
         C: AsRef<str>,
     {
         asm.push_with_comment(
             Inst::Copy {
-                offset: self.offset,
+                offset: self.offset.translate(id),
             },
             span,
             comment,
@@ -69,13 +88,13 @@ impl Var {
     }
 
     /// Move the declared variable.
-    pub(crate) fn do_move<C>(&self, asm: &mut Assembly, span: Span, comment: C)
+    pub(crate) fn do_move<C>(&self, id: VarId, asm: &mut Assembly, span: Span, comment: C)
     where
         C: AsRef<str>,
     {
         asm.push_with_comment(
             Inst::Move {
-                offset: self.offset,
+                offset: self.offset.translate(id),
             },
             span,
             comment,
@@ -179,13 +198,13 @@ impl Scopes {
     }
 
     /// Try to get the given variable with its ID included.
-    pub(crate) fn try_get_var_with_id(
+    pub(crate) fn try_get_var(
         &self,
         name: &str,
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<Option<(&Var, VarId)>> {
+    ) -> CompileResult<Option<(VarId, &Var)>> {
         for scope in self.scopes.iter().rev() {
             let id = match scope.locals.get(name).copied() {
                 Some(id) => id,
@@ -206,28 +225,10 @@ impl Scopes {
 
             log::trace!("found var: {} => {:?}", name, var);
             visitor.visit_variable_use(source_id, var, span);
-            return Ok(Some((var, id)));
+            return Ok(Some((id, var)));
         }
 
         Ok(None)
-    }
-
-    /// Try to get the local with the given name. Returns `None` if it's
-    /// missing.
-    pub(crate) fn try_get_var(
-        &self,
-        name: &str,
-        source_id: SourceId,
-        visitor: &mut dyn CompileVisitor,
-        span: Span,
-    ) -> CompileResult<Option<&Var>> {
-        let result = self.try_get_var_with_id(name, source_id, visitor, span)?;
-
-        if let Some((var, _)) = result {
-            Ok(Some(var))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Try to get the local with the given name. Returns `None` if it's
@@ -238,7 +239,7 @@ impl Scopes {
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<Option<&mut Var>> {
+    ) -> CompileResult<Option<(VarId, &mut Var)>> {
         log::trace!("get var: {}", name);
 
         for scope in self.scopes.iter_mut().rev() {
@@ -261,7 +262,7 @@ impl Scopes {
 
             log::trace!("found var: {} => {:?}", name, var);
             visitor.visit_variable_use(source_id, var, span);
-            return Ok(Some(var));
+            return Ok(Some((id, var)));
         }
 
         Ok(None)
@@ -275,7 +276,7 @@ impl Scopes {
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<Option<&Var>> {
+    ) -> CompileResult<Option<(VarId, &Var)>> {
         log::trace!("get var: {}", name);
 
         for scope in self.scopes.iter_mut().rev() {
@@ -300,7 +301,7 @@ impl Scopes {
 
             log::trace!("found var: {} => {:?}", name, var);
             visitor.visit_variable_use(source_id, var, span);
-            return Ok(Some(var));
+            return Ok(Some((id, var)));
         }
 
         Ok(None)
@@ -313,9 +314,9 @@ impl Scopes {
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<&Var> {
+    ) -> CompileResult<(VarId, &Var)> {
         match self.try_get_var(name, source_id, visitor, span)? {
-            Some(var) => Ok(var),
+            Some(result) => Ok(result),
             None => Err(CompileError::new(
                 span,
                 CompileErrorKind::MissingLocal {
@@ -332,7 +333,7 @@ impl Scopes {
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<&mut Var> {
+    ) -> CompileResult<(VarId, &mut Var)> {
         match self.try_get_var_mut(name, source_id, visitor, span)? {
             Some(var) => Ok(var),
             None => Err(CompileError::new(
@@ -351,7 +352,7 @@ impl Scopes {
         source_id: SourceId,
         visitor: &mut dyn CompileVisitor,
         span: Span,
-    ) -> CompileResult<&Var> {
+    ) -> CompileResult<(VarId, &Var)> {
         match self.try_take_var(name, source_id, visitor, span)? {
             Some(var) => Ok(var),
             None => Err(CompileError::new(
@@ -389,12 +390,11 @@ impl Scopes {
 
     /// Declare a new unnamed variable.
     pub(crate) fn unnamed(&mut self, span: Span) -> VarId {
-        let offset = self.stack.len();
-        self.unnamed_with_offset(span, offset)
+        self.unnamed_with_offset(span, VarOffset::Stack)
     }
 
     /// Declare a new unnamed variable with the specified offset.
-    pub(crate) fn unnamed_with_offset(&mut self, span: Span, offset: usize) -> VarId {
+    pub(crate) fn unnamed_with_offset(&mut self, span: Span, offset: VarOffset) -> VarId {
         let id = VarId(self.stack.len());
 
         let local = Var {
@@ -467,7 +467,7 @@ impl Scopes {
         self.last_mut(span)?.locals.insert(name.to_owned(), id);
 
         self.stack.push(Var {
-            offset,
+            offset: VarOffset::Offset(offset),
             span,
             moved_at: None,
             declared: false,
@@ -534,13 +534,14 @@ impl Scopes {
     }
 
     /// Gets the stack offset for the given variable id.
-    pub(crate) fn offset_of(&self, span: Span, id: VarId) -> CompileResult<VarOffset> {
+    pub(crate) fn offset_of(&self, span: Span, id: VarId) -> CompileResult<CalculatedOffset> {
         let var = self.var(span, id)?;
+        let offset = var.offset.translate(id);
 
-        Ok(if var.offset + 1 == self.stack.len() {
-            VarOffset::Top
+        Ok(if offset + 1 == self.stack.len() {
+            CalculatedOffset::Top
         } else {
-            VarOffset::Offset(var.offset)
+            CalculatedOffset::Offset(offset)
         })
     }
 
@@ -561,11 +562,6 @@ impl Scopes {
     /// Test if the last scope contains the given variable.
     pub(crate) fn scope_contains(&self, span: Span, id: VarId) -> CompileResult<bool> {
         Ok(self.last(span)?.contains(id))
-    }
-
-    /// Test if the given var is on top of the stack.
-    pub(crate) fn is_stack_top(&self, id: VarId) -> bool {
-        id.0 + 1 == self.stack.len()
     }
 
     /// Get the local with the given name.
@@ -624,19 +620,11 @@ impl ScopeGuard {
         c: &mut Compiler<'_>,
         value: Value,
     ) -> CompileResult<Scope> {
-        let stack = c.scopes.stack.len();
         let mut scope = self.pop(span, c)?;
 
         if let Some(id) = value.try_into_var() {
             if !scope.contains(id) {
                 return Ok(scope);
-            }
-
-            if id.0 + 1 != stack {
-                return Err(CompileError::new(
-                    span,
-                    CompileErrorKind::VarTransferNotTop { id, stack },
-                ));
             }
 
             let var = scope.stack.pop().ok_or_else(|| {

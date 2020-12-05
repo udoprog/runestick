@@ -40,7 +40,7 @@ mod lit_str;
 mod local;
 mod prelude;
 
-use crate::compiling::{CompileError, CompileResult, Compiler, Needs, VarId, VarOffset};
+use crate::compiling::{CalculatedOffset, CompileError, CompileResult, Compiler, Needs, VarId};
 use runestick::{CompileMetaCapture, Inst, InstAddress, Span};
 
 #[derive(Debug, Clone, Copy)]
@@ -92,7 +92,7 @@ impl Value {
     /// Get the offset of the value.
     pub(crate) fn offset(self, c: &mut Compiler<'_>) -> CompileResult<usize> {
         let id = self.into_var()?;
-        Ok(c.scopes.var(self.span, id)?.offset)
+        Ok(c.scopes.var(self.span, id)?.offset.translate(id))
     }
 
     /// Ignore the produced value.
@@ -101,8 +101,8 @@ impl Value {
             ValueKind::Unreachable => (),
             ValueKind::Empty => (),
             ValueKind::Var(id) => match c.scopes.offset_of(self.span, id)? {
-                VarOffset::Offset(..) => (),
-                VarOffset::Top => {
+                CalculatedOffset::Offset(..) => (),
+                CalculatedOffset::Top => {
                     c.scopes.stack_pop(self.span)?;
                     c.asm.push(Inst::Pop, self.span);
                 }
@@ -118,10 +118,10 @@ impl Value {
         let id = self.into_var()?;
 
         match c.scopes.offset_of(self.span, id)? {
-            VarOffset::Offset(offset) => {
+            CalculatedOffset::Offset(offset) => {
                 c.asm.push(Inst::Copy { offset }, self.span);
             }
-            VarOffset::Top => {
+            CalculatedOffset::Top => {
                 let (_, popped) = c.scopes.stack_pop(self.span)?;
                 debug_assert!(popped == id);
             }
@@ -136,10 +136,10 @@ impl Value {
         let id = self.into_var()?;
 
         match c.scopes.offset_of(self.span, id)? {
-            VarOffset::Offset(offset) => {
+            CalculatedOffset::Offset(offset) => {
                 c.asm.push(Inst::Copy { offset }, self.span);
             }
-            VarOffset::Top => {
+            CalculatedOffset::Top => {
                 c.asm.push(Inst::Dup, self.span);
             }
         }
@@ -152,8 +152,8 @@ impl Value {
         let id = self.into_var()?;
 
         let address = match c.scopes.offset_of(self.span, id)? {
-            VarOffset::Offset(offset) => InstAddress::Offset(offset),
-            VarOffset::Top => InstAddress::Last,
+            CalculatedOffset::Offset(offset) => InstAddress::Offset(offset),
+            CalculatedOffset::Top => InstAddress::Last,
         };
 
         Ok(address)
@@ -166,8 +166,8 @@ impl Value {
         let var = *c.scopes.var(self.span, id)?;
 
         let address = match c.scopes.offset_of(self.span, id)? {
-            VarOffset::Offset(offset) => InstAddress::Offset(offset),
-            VarOffset::Top => {
+            CalculatedOffset::Offset(offset) => InstAddress::Offset(offset),
+            CalculatedOffset::Top => {
                 // Don't consume declared values. These are values which have
                 // been given a name somewhere.
                 if var.declared {

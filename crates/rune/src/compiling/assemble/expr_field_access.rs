@@ -89,7 +89,7 @@ fn try_immediate_field_access_optimization(
         Err(..) => return Ok(None),
     };
 
-    let var =
+    let (id, var) =
         match this
             .scopes
             .try_get_var(ident.as_ref(), this.source_id, this.visitor, path.span())?
@@ -100,7 +100,7 @@ fn try_immediate_field_access_optimization(
 
     this.asm.push(
         Inst::TupleIndexGet {
-            target: InstAddress::Offset(var.offset),
+            target: InstAddress::Offset(var.offset.translate(id)),
             index,
         },
         span,

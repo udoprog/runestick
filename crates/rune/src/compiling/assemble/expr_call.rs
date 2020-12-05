@@ -82,10 +82,10 @@ impl Assemble for ast::ExprCall {
         if let Some(name) = named.as_local() {
             let local = c
                 .scopes
-                .try_get_var(name, c.source_id, c.visitor, path.span())?
-                .copied();
+                .try_get_var(name, c.source_id, c.visitor, path.span())?;
 
-            if let Some(var) = local {
+            if let Some((id, var)) = local {
+                let var = *var;
                 let mut values = Vec::new();
 
                 for (expr, _) in &self.args {
@@ -96,7 +96,7 @@ impl Assemble for ast::ExprCall {
                     expr.pop(c)?;
                 }
 
-                var.copy(&mut c.asm, span, format!("var `{}`", name));
+                var.copy(id, &mut c.asm, span, format!("var `{}`", name));
                 c.asm.push(Inst::CallFn { args }, span);
 
                 if !needs.value() {

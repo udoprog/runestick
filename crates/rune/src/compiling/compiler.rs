@@ -116,17 +116,6 @@ impl<'a> Compiler<'a> {
     ) -> CompileResult<()> {
         if let Some(id) = value.try_into_var() {
             if self.scopes.scope_contains(span, id)? {
-                // NB: cleaning can only clean up the var that is on the top of the stack.
-                if !self.scopes.is_stack_top(id) {
-                    return Err(CompileError::new(
-                        span,
-                        CompileErrorKind::VarTransferNotTop {
-                            id,
-                            stack: self.scopes.totals(),
-                        },
-                    ));
-                }
-
                 // NB: top of the stack needs to be preserved.
                 let count = count.checked_sub(1).ok_or_else(|| {
                     CompileError::new(

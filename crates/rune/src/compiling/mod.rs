@@ -17,7 +17,7 @@ mod unit_builder;
 
 pub use self::compile_error::{CompileError, CompileErrorKind, CompileResult, ImportEntryStep};
 pub use self::compile_visitor::{CompileVisitor, NoopCompileVisitor};
-pub use self::scopes::{Var, VarId, VarOffset};
+pub use self::scopes::{CalculatedOffset, Var, VarId, VarOffset};
 pub use self::unit_builder::{BuildError, InsertMetaError, LinkerError, UnitBuilder};
 use crate::parsing::Resolve as _;
 

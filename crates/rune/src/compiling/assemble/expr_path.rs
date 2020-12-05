@@ -7,13 +7,13 @@ impl Assemble for ast::Path {
         log::trace!("Path => {:?}", c.source.source(span));
 
         if let Some(ast::PathKind::SelfValue) = self.as_kind() {
-            let var = c.scopes.get_var("self", c.source_id, c.visitor, span)?;
+            let (id, var) = c.scopes.get_var("self", c.source_id, c.visitor, span)?;
 
             if !needs.value() {
                 return Ok(Value::empty(span));
             }
 
-            var.copy(&mut c.asm, span, "self");
+            var.copy(id, &mut c.asm, span, "self");
             return Ok(Value::unnamed(span, c));
         }
 
@@ -21,10 +21,7 @@ impl Assemble for ast::Path {
 
         if let Needs::Value = needs {
             if let Some(local) = named.as_local() {
-                if let Some((_, id)) =
-                    c.scopes
-                        .try_get_var_with_id(local, c.source_id, c.visitor, span)?
-                {
+                if let Some((id, _)) = c.scopes.try_get_var(local, c.source_id, c.visitor, span)? {
                     return Ok(Value::var(span, id));
                 }
             }

@@ -1,7 +1,27 @@
 use crate::collections::HashMap;
-use crate::compiling::Assembly;
+use crate::compiling::{Assembly, Compiler};
 use crate::{CompileError, CompileErrorKind, CompileResult, CompileVisitor};
 use runestick::{Inst, SourceId, Span};
+use std::fmt;
+
+/// The identifier of a variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VarId(usize);
+
+/// A calculated variable offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VarOffset {
+    /// Variable is on the top of the stack.
+    Top,
+    /// Variable is at the given offset.
+    Offset(usize),
+}
+
+impl fmt::Display for VarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A locally declared variable, its calculated stack offset and where it was
 /// declared in its source file.
@@ -50,25 +70,15 @@ impl Var {
     }
 }
 
-/// A locally declared variable.
-#[derive(Debug, Clone)]
-pub(crate) struct AnonVar {
-    /// Slot offset from the current stack frame.
-    offset: usize,
-    /// Span associated with the anonymous variable.
-    span: Span,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Scope {
     /// Named variables.
-    locals: HashMap<String, Var>,
-    /// Anonymous variables.
-    anon: Vec<AnonVar>,
-    /// The number of variables.
-    pub(crate) total_var_count: usize,
-    /// The number of variables local to this scope.
-    pub(crate) local_var_count: usize,
+    locals: HashMap<String, VarId>,
+    /// At which point on the stack the head of this scope is.
+    head: usize,
+    /// Vars that were popped as part of this scope. These are only populated
+    /// once the scope is popped.
+    vars: Vec<Var>,
 }
 
 impl Scope {
@@ -76,173 +86,22 @@ impl Scope {
     fn new() -> Scope {
         Self {
             locals: HashMap::new(),
-            anon: Vec::new(),
-            total_var_count: 0,
-            local_var_count: 0,
+            head: 0,
+            vars: vec![],
         }
     }
 
-    /// Construct a new child scope.
-    fn child(&self) -> Self {
-        Self {
-            locals: HashMap::new(),
-            anon: Vec::new(),
-            total_var_count: self.total_var_count,
-            local_var_count: 0,
-        }
-    }
-
-    /// Insert a new local, and return the old one if there's a conflict.
-    fn new_var(&mut self, name: &str, span: Span) -> CompileResult<usize> {
-        let offset = self.total_var_count;
-
-        let local = Var {
-            offset,
-            span,
-            moved_at: None,
-        };
-
-        self.total_var_count += 1;
-        self.local_var_count += 1;
-
-        if let Some(old) = self.locals.insert(name.to_owned(), local) {
-            return Err(CompileError::new(
-                span,
-                CompileErrorKind::VariableConflict {
-                    name: name.to_owned(),
-                    existing_span: old.span(),
-                },
-            ));
-        }
-
-        Ok(offset)
-    }
-
-    /// Insert a new local, and return the old one if there's a conflict.
-    pub(crate) fn decl_var(&mut self, name: &str, span: Span) -> usize {
-        let offset = self.total_var_count;
-
-        log::trace!("decl {} => {}", name, offset);
-
-        self.locals.insert(
-            name.to_owned(),
-            Var {
-                offset,
-                span,
-                moved_at: None,
-            },
-        );
-
-        self.total_var_count += 1;
-        self.local_var_count += 1;
-        offset
-    }
-
-    /// Insert a new local, and return the old one if there's a conflict.
-    fn decl_var_with_offset(&mut self, name: &str, offset: usize, span: Span) {
-        log::trace!("decl {} => {}", name, offset);
-
-        self.locals.insert(
-            name.to_owned(),
-            Var {
-                offset,
-                span,
-                moved_at: None,
-            },
-        );
-    }
-
-    /// Declare an anonymous variable.
-    ///
-    /// This is used if cleanup is required in the middle of an expression.
-    fn decl_anon(&mut self, span: Span) -> usize {
-        let offset = self.total_var_count;
-
-        self.anon.push(AnonVar { offset, span });
-
-        self.total_var_count += 1;
-        self.local_var_count += 1;
-        offset
-    }
-
-    /// Undeclare the last anonymous variable.
-    pub(crate) fn undecl_anon(&mut self, span: Span, n: usize) -> CompileResult<()> {
-        for _ in 0..n {
-            self.anon.pop();
-        }
-
-        self.total_var_count = self
-            .total_var_count
-            .checked_sub(n)
-            .ok_or_else(|| CompileError::msg(&span, "totals out of bounds"))?;
-
-        self.local_var_count = self
-            .local_var_count
-            .checked_sub(n)
-            .ok_or_else(|| CompileError::msg(&span, "locals out of bounds"))?;
-
-        Ok(())
-    }
-
-    /// Access the variable with the given name.
-    fn get(&self, name: &str, span: Span) -> CompileResult<Option<&Var>> {
-        if let Some(var) = self.locals.get(name) {
-            if let Some(moved_at) = var.moved_at {
-                return Err(CompileError::new(
-                    span,
-                    CompileErrorKind::VariableMoved { moved_at },
-                ));
-            }
-
-            return Ok(Some(var));
-        }
-
-        Ok(None)
-    }
-
-    /// Access the variable with the given name mutably.
-    fn get_mut(&mut self, name: &str, span: Span) -> CompileResult<Option<&mut Var>> {
-        if let Some(var) = self.locals.get_mut(name) {
-            if let Some(moved_at) = var.moved_at {
-                return Err(CompileError::new(
-                    span,
-                    CompileErrorKind::VariableMoved { moved_at },
-                ));
-            }
-
-            return Ok(Some(var));
-        }
-
-        Ok(None)
-    }
-
-    /// Access the variable with the given name.
-    fn take(&mut self, name: &str, span: Span) -> CompileResult<Option<&Var>> {
-        if let Some(var) = self.locals.get_mut(name) {
-            if let Some(moved_at) = var.moved_at {
-                return Err(CompileError::new(
-                    span,
-                    CompileErrorKind::VariableMoved { moved_at },
-                ));
-            }
-
-            var.moved_at = Some(span);
-            return Ok(Some(var));
-        }
-
-        Ok(None)
+    /// Test if the scope is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.vars.is_empty()
     }
 }
 
-/// A guard returned from [push][Scopes::push].
-///
-/// This should be provided to a subsequent [pop][Scopes::pop] to allow it to be
-/// sanity checked.
-#[must_use]
-pub(crate) struct ScopeGuard(usize);
-
 pub(crate) struct Scopes {
+    /// Scopes with named locals.
     scopes: Vec<Scope>,
+    /// Declared variables.
+    stack: Vec<Var>,
 }
 
 impl Scopes {
@@ -250,7 +109,74 @@ impl Scopes {
     pub(crate) fn new() -> Self {
         Self {
             scopes: vec![Scope::new()],
+            stack: Vec::new(),
         }
+    }
+
+    /// Construct a new scope based on the current stack location.
+    pub(crate) fn scope(&self) -> Scope {
+        Scope {
+            locals: HashMap::new(),
+            head: self.stack.len(),
+            vars: Vec::new(),
+        }
+    }
+
+    /// Clean the current scope wit the given count.
+    pub(crate) fn pop(&mut self, span: Span, count: usize) -> CompileResult<()> {
+        let head = self.last(span)?.head;
+
+        let new_top = self
+            .stack
+            .len()
+            .checked_sub(count)
+            .ok_or_else(|| CompileError::msg(span, "pop out of bounds for scope"))?;
+
+        if new_top < head {
+            return Err(CompileError::msg(span, "pop out of bounds for scope head"));
+        }
+
+        for _ in 0..count {
+            self.stack
+                .pop()
+                .ok_or_else(|| CompileError::msg(span, "stack pop is out of bounds"))?;
+        }
+
+        Ok(())
+    }
+
+    /// Try to get the given variable with its ID included.
+    pub(crate) fn try_get_var_with_id(
+        &self,
+        name: &str,
+        source_id: SourceId,
+        visitor: &mut dyn CompileVisitor,
+        span: Span,
+    ) -> CompileResult<Option<(&Var, VarId)>> {
+        for scope in self.scopes.iter().rev() {
+            let id = match scope.locals.get(name).copied() {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let var = self
+                .stack
+                .get(id.0)
+                .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))?;
+
+            if let Some(moved_at) = var.moved_at {
+                return Err(CompileError::new(
+                    span,
+                    CompileErrorKind::VariableMoved { moved_at },
+                ));
+            }
+
+            log::trace!("found var: {} => {:?}", name, var);
+            visitor.visit_variable_use(source_id, var, span);
+            return Ok(Some((var, id)));
+        }
+
+        Ok(None)
     }
 
     /// Try to get the local with the given name. Returns `None` if it's
@@ -262,17 +188,13 @@ impl Scopes {
         visitor: &mut dyn CompileVisitor,
         span: Span,
     ) -> CompileResult<Option<&Var>> {
-        log::trace!("get var: {}", name);
+        let result = self.try_get_var_with_id(name, source_id, visitor, span)?;
 
-        for scope in self.scopes.iter().rev() {
-            if let Some(var) = scope.get(name, span)? {
-                log::trace!("found var: {} => {:?}", name, var);
-                visitor.visit_variable_use(source_id, var, span);
-                return Ok(Some(var));
-            }
+        if let Some((var, _)) = result {
+            Ok(Some(var))
+        } else {
+            Ok(None)
         }
-
-        Ok(None)
     }
 
     /// Try to get the local with the given name. Returns `None` if it's
@@ -287,11 +209,26 @@ impl Scopes {
         log::trace!("get var: {}", name);
 
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(var) = scope.get_mut(name, span)? {
-                log::trace!("found var: {} => {:?}", name, var);
-                visitor.visit_variable_use(source_id, var, span);
-                return Ok(Some(var));
+            let id = match scope.locals.get(name).copied() {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let var = self
+                .stack
+                .get_mut(id.0)
+                .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))?;
+
+            if let Some(moved_at) = var.moved_at {
+                return Err(CompileError::new(
+                    span,
+                    CompileErrorKind::VariableMoved { moved_at },
+                ));
             }
+
+            log::trace!("found var: {} => {:?}", name, var);
+            visitor.visit_variable_use(source_id, var, span);
+            return Ok(Some(var));
         }
 
         Ok(None)
@@ -309,11 +246,28 @@ impl Scopes {
         log::trace!("get var: {}", name);
 
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(var) = scope.take(name, span)? {
-                log::trace!("found var: {} => {:?}", name, var);
-                visitor.visit_variable_use(source_id, var, span);
-                return Ok(Some(var));
+            let id = match scope.locals.get(name).copied() {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let var = self
+                .stack
+                .get_mut(id.0)
+                .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))?;
+
+            if let Some(moved_at) = var.moved_at {
+                return Err(CompileError::new(
+                    span,
+                    CompileErrorKind::VariableMoved { moved_at },
+                ));
             }
+
+            var.moved_at = Some(span);
+
+            log::trace!("found var: {} => {:?}", name, var);
+            visitor.visit_variable_use(source_id, var, span);
+            return Ok(Some(var));
         }
 
         Ok(None)
@@ -376,92 +330,195 @@ impl Scopes {
         }
     }
 
-    /// Construct a new variable.
-    pub(crate) fn new_var(&mut self, name: &str, span: Span) -> CompileResult<usize> {
-        self.last_mut(span)?.new_var(name, span)
+    /// Pop the stack.
+    pub(crate) fn stack_pop(&mut self, span: Span) -> CompileResult<Var> {
+        let head = self.last(span)?.head;
+
+        if self.stack.len() == head {
+            return Err(CompileError::msg(span, "stack pop is out of bounds"));
+        }
+
+        self.stack
+            .pop()
+            .ok_or_else(|| CompileError::msg(span, "stack pop is out of bounds"))
     }
 
-    /// Declare the given variable.
-    pub(crate) fn decl_var(&mut self, name: &str, span: Span) -> CompileResult<usize> {
-        Ok(self.last_mut(span)?.decl_var(name, span))
+    /// Push a custom variable onto the stack.
+    pub(crate) fn stack_push(&mut self, var: Var) {
+        self.stack.push(var);
     }
 
-    /// Declare the given variable with a custom offset.
-    pub(crate) fn decl_var_with_offset(
+    /// Declare a new unnamed variable.
+    pub(crate) fn unnamed(&mut self, span: Span) -> VarId {
+        let offset = self.stack.len();
+        self.unnamed_with_offset(span, offset)
+    }
+
+    /// Declare a new unnamed variable with the specified offset.
+    pub(crate) fn unnamed_with_offset(&mut self, span: Span, offset: usize) -> VarId {
+        let id = VarId(self.stack.len());
+
+        let local = Var {
+            offset,
+            span,
+            moved_at: None,
+        };
+
+        self.stack.push(local);
+        id
+    }
+
+    /// Insert a new named local variable.
+    pub(crate) fn named(&mut self, name: &str, span: Span) -> CompileResult<VarId> {
+        let id = self.unnamed(span);
+        let scope = self.last_mut(span)?;
+
+        if let Some(old) = scope.locals.insert(name.to_owned(), id) {
+            let old = self.stack.get(old.0).ok_or_else(|| {
+                CompileError::new(span, CompileErrorKind::VarIdMissing { id: old })
+            })?;
+
+            return Err(CompileError::new(
+                span,
+                CompileErrorKind::VariableConflict {
+                    name: name.to_owned(),
+                    existing_span: old.span(),
+                },
+            ));
+        }
+
+        Ok(id)
+    }
+
+    /// Insert a new named local variable with a specific id.
+    pub(crate) fn named_with_id(
+        &mut self,
+        name: &str,
+        id: VarId,
+        span: Span,
+    ) -> CompileResult<VarId> {
+        let scope = self.last_mut(span)?;
+
+        if let Some(old) = scope.locals.insert(name.to_owned(), id) {
+            let old = self.stack.get(old.0).ok_or_else(|| {
+                CompileError::new(span, CompileErrorKind::VarIdMissing { id: old })
+            })?;
+
+            return Err(CompileError::new(
+                span,
+                CompileErrorKind::VariableConflict {
+                    name: name.to_owned(),
+                    existing_span: old.span(),
+                },
+            ));
+        }
+
+        Ok(id)
+    }
+
+    /// Set the variable with the given name, with the given offset.
+    pub(crate) fn set_with_offset(
         &mut self,
         name: &str,
         offset: usize,
         span: Span,
-    ) -> CompileResult<()> {
-        Ok(self
-            .last_mut(span)?
-            .decl_var_with_offset(name, offset, span))
+    ) -> CompileResult<VarId> {
+        let id = VarId(self.stack.len());
+        self.last_mut(span)?.locals.insert(name.to_owned(), id);
+
+        self.stack.push(Var {
+            offset,
+            span,
+            moved_at: None,
+        });
+
+        Ok(id)
     }
 
-    /// Declare an anonymous variable.
-    pub(crate) fn decl_anon(&mut self, span: Span) -> CompileResult<usize> {
-        Ok(self.last_mut(span)?.decl_anon(span))
+    /// Set the value of the given name.
+    pub(crate) fn set(&mut self, name: &str, span: Span) -> CompileResult<VarId> {
+        let offset = self.stack.len();
+        self.set_with_offset(name, offset, span)
     }
 
-    /// Declare an anonymous variable.
-    pub(crate) fn undecl_anon(&mut self, span: Span, n: usize) -> CompileResult<()> {
-        self.last_mut(span)?.undecl_anon(span, n)
-    }
-
-    /// Push a scope and return an index.
-    pub(crate) fn push(&mut self, scope: Scope) -> ScopeGuard {
-        self.scopes.push(scope);
-        ScopeGuard(self.scopes.len())
-    }
-
-    /// Pop the last scope and compare with the expected length.
-    pub(crate) fn pop(&mut self, expected: ScopeGuard, span: Span) -> CompileResult<Scope> {
-        let ScopeGuard(expected) = expected;
-
-        if self.scopes.len() != expected {
+    /// Construct a new child scope and return its guard.
+    ///
+    /// This is realted to advanced scope management, where a previously created
+    /// scope can be added back to the stack.
+    pub(crate) fn push_scope(&mut self, span: Span, mut scope: Scope) -> CompileResult<ScopeGuard> {
+        if scope.head != self.stack.len() {
             return Err(CompileError::msg(
-                &span,
-                "the number of scopes do not match",
+                span,
+                "pushed scope head does not match length of scope",
             ));
         }
 
-        self.pop_unchecked(span)
+        self.stack.extend(scope.vars.drain(..));
+        self.scopes.push(scope);
+
+        log::trace!(">> scope guard: {}", self.scopes.len());
+
+        Ok(ScopeGuard {
+            expected: self.scopes.len(),
+        })
     }
 
-    /// Pop the last of the scope.
-    pub(crate) fn pop_last(&mut self, span: Span) -> CompileResult<Scope> {
-        self.pop(ScopeGuard(1), span)
+    /// Construct a new child scope.
+    pub(crate) fn push(&mut self) -> ScopeGuard {
+        let scope = self.scope();
+        self.scopes.push(scope);
+
+        log::trace!(">> scope guard: {}", self.scopes.len());
+
+        ScopeGuard {
+            expected: self.scopes.len(),
+        }
     }
 
     /// Pop the last scope and compare with the expected length.
-    pub(crate) fn pop_unchecked(&mut self, span: Span) -> CompileResult<Scope> {
+    pub(crate) fn pop_last(&mut self, span: Span) -> CompileResult<Scope> {
+        if self.scopes.len() != 1 {
+            return Err(CompileError::msg(span, "missing last scope"));
+        }
+
         let scope = self
             .scopes
             .pop()
-            .ok_or_else(|| CompileError::msg(&span, "missing parent scope"))?;
+            .ok_or_else(|| CompileError::msg(&span, "missing last scope"))?;
 
         Ok(scope)
     }
 
-    /// Construct a new child scope and return its guard.
-    pub(crate) fn push_child(&mut self, span: Span) -> CompileResult<ScopeGuard> {
-        let scope = self.last(span)?.child();
-        Ok(self.push(scope))
+    /// Gets the stack offset for the given variable id.
+    pub(crate) fn offset_of(&self, span: Span, id: VarId) -> CompileResult<VarOffset> {
+        let var = self.var_of(span, id)?;
+
+        Ok(if var.offset + 1 == self.stack.len() {
+            VarOffset::Top
+        } else {
+            VarOffset::Offset(var.offset)
+        })
     }
 
-    /// Construct a new child scope.
-    pub(crate) fn child(&mut self, span: Span) -> CompileResult<Scope> {
-        Ok(self.last(span)?.child())
+    /// Gets the stack offset for the given variable id.
+    pub(crate) fn var_of(&self, span: Span, id: VarId) -> CompileResult<&Var> {
+        self.stack
+            .get(id.0)
+            .ok_or_else(|| CompileError::new(span, CompileErrorKind::VarIdMissing { id }))
     }
 
-    /// Get the local var count of the top scope.
-    pub(crate) fn local_var_count(&self, span: Span) -> CompileResult<usize> {
-        Ok(self.last(span)?.local_var_count)
+    /// Total stack size.
+    pub(crate) fn totals(&self) -> usize {
+        self.stack.len()
     }
 
-    /// Get the total var count of the top scope.
-    pub(crate) fn total_var_count(&self, span: Span) -> CompileResult<usize> {
-        Ok(self.last(span)?.total_var_count)
+    /// Get the number of variables local to the current scope.
+    pub(crate) fn locals(&self) -> usize {
+        if let Some(scope) = self.scopes.last() {
+            self.stack.len() - scope.head
+        } else {
+            self.stack.len()
+        }
     }
 
     /// Get the local with the given name.
@@ -478,5 +535,66 @@ impl Scopes {
             .scopes
             .last_mut()
             .ok_or_else(|| CompileError::msg(&span, "missing head of locals"))?)
+    }
+}
+
+/// A scope guard.
+#[must_use = "must be consumed with `pop()`"]
+pub struct ScopeGuard {
+    expected: usize,
+}
+
+impl ScopeGuard {
+    /// Popping of the scope guard.
+    pub(crate) fn pop(self, span: Span, c: &mut Compiler<'_>) -> CompileResult<Scope> {
+        let expected = std::mem::ManuallyDrop::new(self).expected;
+
+        log::trace!("<< scope guard: {}", expected);
+
+        if c.scopes.scopes.len() != expected {
+            log::trace!(
+                "scope guard mismatch: {} != {}",
+                c.scopes.stack.len(),
+                expected
+            );
+            return Err(CompileError::msg(span, "scope guard mismatch"));
+        }
+
+        let mut scope = c
+            .scopes
+            .scopes
+            .pop()
+            .ok_or_else(|| CompileError::msg(span, "no scopes to pop"))?;
+
+        scope.vars = c.scopes.stack.drain(scope.head..).collect();
+        Ok(scope)
+    }
+
+    /// Pop and transfer the given number of variables from this scope.
+    pub(crate) fn transfer(
+        self,
+        span: Span,
+        c: &mut Compiler<'_>,
+        transfer: usize,
+    ) -> CompileResult<Scope> {
+        let mut scope = self.pop(span, c)?;
+
+        if scope.vars.len() < transfer {
+            return Err(CompileError::msg(
+                span,
+                "not enough variables in popped scope to transfer",
+            ));
+        }
+
+        c.scopes.stack.extend(scope.vars.drain(..transfer));
+        Ok(scope)
+    }
+}
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        if cfg!(debug) {
+            panic!("scope guard at level {} was not disarmed", self.expected)
+        }
     }
 }

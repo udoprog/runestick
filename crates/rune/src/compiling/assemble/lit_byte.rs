@@ -9,11 +9,11 @@ impl Assemble for ast::LitByte {
         // NB: Elide the entire literal if it's not needed.
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Value::top(span));
+            return Ok(Value::empty(span));
         }
 
         let b = self.resolve(&c.storage, &*c.source)?;
         c.asm.push(Inst::byte(b), span);
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

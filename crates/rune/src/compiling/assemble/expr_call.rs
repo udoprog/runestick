@@ -6,7 +6,6 @@ impl Assemble for ast::ExprCall {
         let span = self.span();
         log::trace!("ExprCall => {:?}", c.source.source(span));
 
-        let guard = c.scopes.push_child(span)?;
         let args = self.args.len();
 
         // NB: either handle a proper function call by resolving it's meta hash,
@@ -29,12 +28,18 @@ impl Assemble for ast::ExprCall {
                     {
                         log::trace!("ExprCall(ExprFieldAccess) => {:?}", c.source.source(span));
 
-                        expr.assemble(c, Needs::Value)?.push(c)?;
+                        let expr = expr.assemble(c, Needs::Value)?;
+                        let mut values = Vec::new();
 
                         for (expr, _) in &self.args {
-                            expr.assemble(c, Needs::Value)?.push(c)?;
-                            c.scopes.decl_anon(span)?;
+                            values.push(expr.assemble(c, Needs::Value)?);
                         }
+
+                        for expr in values.into_iter().rev() {
+                            expr.pop(c)?;
+                        }
+
+                        expr.pop(c)?;
 
                         let ident = ident.resolve(&c.storage, &*c.source)?;
                         let hash = Hash::instance_fn_name(ident.as_ref());
@@ -50,21 +55,26 @@ impl Assemble for ast::ExprCall {
             if use_expr {
                 log::trace!("ExprCall(Other) => {:?}", c.source.source(span));
 
+                let mut values = Vec::new();
+
                 for (expr, _) in &self.args {
-                    expr.assemble(c, Needs::Value)?.push(c)?;
-                    c.scopes.decl_anon(span)?;
+                    values.push(expr.assemble(c, Needs::Value)?);
                 }
 
-                expr.assemble(c, Needs::Value)?.push(c)?;
+                for expr in values.into_iter().rev() {
+                    expr.pop(c)?;
+                }
+
+                expr.assemble(c, Needs::Value)?.pop(c)?;
                 c.asm.push(Inst::CallFn { args }, span);
             }
 
             if !needs.value() {
                 c.asm.push(Inst::Pop, span);
+                return Ok(Value::empty(span));
             }
 
-            c.scopes.pop(guard, span)?;
-            return Ok(Value::top(span));
+            return Ok(Value::unnamed(span, c));
         };
 
         let named = c.convert_path_to_named(path)?;
@@ -76,9 +86,14 @@ impl Assemble for ast::ExprCall {
                 .copied();
 
             if let Some(var) = local {
+                let mut values = Vec::new();
+
                 for (expr, _) in &self.args {
-                    expr.assemble(c, Needs::Value)?.push(c)?;
-                    c.scopes.decl_anon(span)?;
+                    values.push(expr.assemble(c, Needs::Value)?);
+                }
+
+                for expr in values.into_iter().rev() {
+                    expr.pop(c)?;
                 }
 
                 var.copy(&mut c.asm, span, format!("var `{}`", name));
@@ -86,10 +101,10 @@ impl Assemble for ast::ExprCall {
 
                 if !needs.value() {
                     c.asm.push(Inst::Pop, span);
+                    return Ok(Value::empty(span));
                 }
 
-                c.scopes.pop(guard, span)?;
-                return Ok(Value::top(span));
+                return Ok(Value::unnamed(span, c));
             }
         }
 
@@ -132,12 +147,15 @@ impl Assemble for ast::ExprCall {
                 let from = c.query.item_for(self)?;
                 let const_fn = c.query.const_fn_for((self.span(), *id))?;
 
+                if !needs.value() {
+                    return Ok(Value::empty(span));
+                }
+
                 let value =
                     c.call_const_fn(self, &meta, &from, &*const_fn, self.args.as_slice())?;
 
                 value.assemble_const(c, Needs::Value, self.span())?;
-                c.scopes.pop(guard, span)?;
-                return Ok(Value::top(span));
+                return Ok(Value::unnamed(span, c));
             }
             _ => {
                 return Err(CompileError::expected_meta(
@@ -148,9 +166,14 @@ impl Assemble for ast::ExprCall {
             }
         };
 
+        let mut values = Vec::with_capacity(self.args.len());
+
         for (expr, _) in &self.args {
-            expr.assemble(c, Needs::Value)?.push(c)?;
-            c.scopes.decl_anon(span)?;
+            values.push(expr.assemble(c, Needs::Value)?);
+        }
+
+        for expr in values.into_iter().rev() {
+            expr.pop(c)?;
         }
 
         let hash = Hash::type_hash(&meta.item.item);
@@ -161,9 +184,9 @@ impl Assemble for ast::ExprCall {
         // But if we don't need the value, then pop it from the stack.
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        c.scopes.pop(guard, span)?;
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

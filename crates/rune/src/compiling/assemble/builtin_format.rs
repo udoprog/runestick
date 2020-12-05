@@ -46,13 +46,14 @@ impl Assemble for BuiltInFormat {
 
         let spec = format::FormatSpec::new(flags, fill, align, width, precision, format_type);
 
-        self.value.assemble(c, Needs::Value)?.push(c)?;
+        self.value.assemble(c, Needs::Value)?.pop(c)?;
         c.asm.push(Inst::Format { spec }, span);
 
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

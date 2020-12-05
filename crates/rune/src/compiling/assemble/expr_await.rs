@@ -6,13 +6,14 @@ impl Assemble for ast::ExprAwait {
         let span = self.span();
         log::trace!("ExprAwait => {:?}", c.source.source(span));
 
-        self.expr.assemble(c, Needs::Value)?.push(c)?;
+        self.expr.assemble(c, Needs::Value)?.pop(c)?;
         c.asm.push(Inst::Await, span);
 
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

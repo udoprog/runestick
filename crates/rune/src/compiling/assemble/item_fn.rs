@@ -18,39 +18,34 @@ impl AssembleFn for ast::ItemFn {
                     }
 
                     let span = s.span();
-                    c.scopes.new_var("self", span)?;
+                    c.scopes.named("self", span)?;
                 }
                 ast::FnArg::Pat(pat) => {
-                    let offset = c.scopes.decl_anon(pat.span())?;
-                    patterns.push((pat, offset));
+                    let value = Value::unnamed(pat.span(), c);
+                    patterns.push((pat, value));
                 }
             }
 
             first = false;
         }
 
-        for (pat, offset) in patterns {
-            c.compile_pat_offset(pat, offset)?;
+        for (pat, value) in patterns {
+            c.compile_pat_offset(pat, value)?;
         }
 
         if self.body.statements.is_empty() {
-            let total_var_count = c.scopes.total_var_count(span)?;
-            c.locals_pop(total_var_count, span);
+            c.locals_clean(span, Needs::None)?;
             c.asm.push(Inst::ReturnUnit, span);
             return Ok(());
         }
 
         if !self.body.produces_nothing() {
-            self.body.assemble(c, Needs::Value)?.push(c)?;
-
-            let total_var_count = c.scopes.total_var_count(span)?;
-            c.locals_clean(total_var_count, span);
+            self.body.assemble(c, Needs::Value)?;
+            c.locals_clean(span, Needs::Value)?;
             c.asm.push(Inst::Return, span);
         } else {
-            self.body.assemble(c, Needs::None)?.push(c)?;
-
-            let total_var_count = c.scopes.total_var_count(span)?;
-            c.locals_pop(total_var_count, span);
+            self.body.assemble(c, Needs::None)?;
+            c.locals_clean(span, Needs::None)?;
             c.asm.push(Inst::ReturnUnit, span);
         }
 

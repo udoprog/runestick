@@ -13,15 +13,19 @@ impl Assemble for ast::ExprFieldAccess {
         #[allow(clippy::single_match)]
         match (&self.expr, &self.expr_field) {
             (ast::Expr::Path(path), ast::ExprField::LitNumber(n)) => {
-                if try_immediate_field_access_optimization(c, span, path, n, needs)? {
-                    return Ok(Value::top(span));
+                if let Some(value) =
+                    try_immediate_field_access_optimization(c, span, path, n, needs)?
+                {
+                    return Ok(value);
                 }
             }
             _ => (),
         }
 
-        let guard = c.scopes.push_child(span)?;
-        let target = self.expr.assemble(c, Needs::Value)?.address(c)?;
+        let target = self
+            .expr
+            .assemble(c, Needs::Value)?
+            .consume_into_address(c)?;
 
         // This loop is actually useful.
         #[allow(clippy::never_loop)]
@@ -38,10 +42,10 @@ impl Assemble for ast::ExprFieldAccess {
                     if !needs.value() {
                         c.warnings.not_used(c.source_id, span, c.context());
                         c.asm.push(Inst::Pop, span);
+                        return Ok(Value::empty(span));
                     }
 
-                    c.scopes.pop(guard, span)?;
-                    return Ok(Value::top(span));
+                    return Ok(Value::unnamed(span, c));
                 }
                 ast::ExprField::Ident(ident) => {
                     let field = ident.resolve(&c.storage, &*c.source)?;
@@ -52,10 +56,10 @@ impl Assemble for ast::ExprFieldAccess {
                     if !needs.value() {
                         c.warnings.not_used(c.source_id, span, c.context());
                         c.asm.push(Inst::Pop, span);
+                        return Ok(Value::empty(span));
                     }
 
-                    c.scopes.pop(guard, span)?;
-                    return Ok(Value::top(span));
+                    return Ok(Value::unnamed(span, c));
                 }
             }
         }
@@ -70,22 +74,22 @@ fn try_immediate_field_access_optimization(
     path: &ast::Path,
     n: &ast::LitNumber,
     needs: Needs,
-) -> CompileResult<bool> {
+) -> CompileResult<Option<Value>> {
     let ident = match path.try_as_ident() {
         Some(ident) => ident,
-        None => return Ok(false),
+        None => return Ok(None),
     };
 
     let ident = ident.resolve(this.storage, &*this.source)?;
 
     let index = match n.resolve(this.storage, &*this.source)? {
         ast::Number::Integer(n) => n,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
 
     let index = match usize::try_from(index) {
         Ok(index) => index,
-        Err(..) => return Ok(false),
+        Err(..) => return Ok(None),
     };
 
     let var =
@@ -94,7 +98,7 @@ fn try_immediate_field_access_optimization(
             .try_get_var(ident.as_ref(), this.source_id, this.visitor, path.span())?
         {
             Some(var) => var,
-            None => return Ok(false),
+            None => return Ok(None),
         };
 
     this.asm.push(
@@ -110,5 +114,5 @@ fn try_immediate_field_access_optimization(
         this.asm.push(Inst::Pop, span);
     }
 
-    Ok(true)
+    Ok(Some(Value::unnamed(span, this)))
 }

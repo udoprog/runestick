@@ -5,11 +5,8 @@ impl Assemble for ast::ExprMatch {
         let span = self.span();
         log::trace!("ExprMatch => {:?}", c.source.source(span));
 
-        let expected_scopes = c.scopes.push_child(span)?;
-
-        self.expr.assemble(c, Needs::Value)?.push(c)?;
-        // Offset of the expression.
-        let offset = c.scopes.decl_anon(span)?;
+        let guard = c.scopes.push();
+        let expr_var = self.expr.assemble(c, Needs::Value)?;
 
         let end_label = c.asm.new_label("match_end");
         let mut branches = Vec::new();
@@ -20,41 +17,27 @@ impl Assemble for ast::ExprMatch {
             let branch_label = c.asm.new_label("match_branch");
             let match_false = c.asm.new_label("match_false");
 
-            let scope = c.scopes.child(span)?;
-            let parent_guard = c.scopes.push(scope);
+            let guard = c.scopes.push();
 
-            let load = move |this: &mut Compiler, needs: Needs| {
-                if needs.value() {
-                    this.asm.push(Inst::Copy { offset }, span);
-                }
-
-                Ok(Value::top(span))
-            };
+            let load = move |_: &mut Compiler, _: Needs| Ok(expr_var);
 
             c.compile_pat(&branch.pat, match_false, &load)?;
 
-            let scope = if let Some((_, condition)) = &branch.condition {
+            if let Some((_, condition)) = &branch.condition {
                 let span = condition.span();
 
-                let scope = c.scopes.child(span)?;
-                let guard = c.scopes.push(scope);
-
-                condition.assemble(c, Needs::Value)?.push(c)?;
-                c.clean_last_scope(span, guard, Needs::Value)?;
-                let scope = c.scopes.pop(parent_guard, span)?;
+                condition.assemble(c, Needs::Value)?.pop(c)?;
 
                 c.asm
-                    .pop_and_jump_if_not(scope.local_var_count, match_false, span);
+                    .pop_and_jump_if_not(c.scopes.locals(), match_false, span);
 
                 c.asm.jump(branch_label, span);
-                scope
-            } else {
-                c.scopes.pop(parent_guard, span)?
-            };
+            }
 
             c.asm.jump(branch_label, span);
             c.asm.label(match_false)?;
 
+            let scope = guard.pop(span, c)?;
             branches.push((branch_label, scope));
         }
 
@@ -66,26 +49,33 @@ impl Assemble for ast::ExprMatch {
 
         c.asm.jump(end_label, span);
 
-        let mut it = self.branches.iter().zip(&branches).peekable();
+        let mut it = self.branches.iter().zip(branches).peekable();
 
         while let Some(((branch, _), (label, scope))) = it.next() {
             let span = branch.span();
 
-            c.asm.label(*label)?;
+            c.asm.label(label)?;
 
-            let expected = c.scopes.push(scope.clone());
-            branch.body.assemble(c, needs)?.push(c)?;
-            c.clean_last_scope(span, expected, needs)?;
+            let guard = c.scopes.push_scope(span, scope)?;
+            branch.body.assemble(c, needs)?;
+            c.locals_clean(span, needs)?;
+            let scope = guard.pop(span, c)?;
+            debug_assert!(scope.is_empty(), "scope used in a branch should be empty");
 
             if it.peek().is_some() {
                 c.asm.jump(end_label, span);
             }
         }
 
+        // Clean up temp loop variable.
+        c.locals_clean(span, Needs::None)?;
+        guard.pop(span, c)?;
         c.asm.label(end_label)?;
 
-        // pop the implicit scope where we store the anonymous match variable.
-        c.clean_last_scope(span, expected_scopes, needs)?;
-        Ok(Value::top(span))
+        if !needs.value() {
+            return Ok(Value::empty(span));
+        }
+
+        Ok(Value::unnamed(span, c))
     }
 }

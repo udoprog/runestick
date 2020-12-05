@@ -7,9 +7,11 @@ impl Assemble for BuiltInTemplate {
         let span = self.span;
         log::trace!("BuiltInTemplate => {:?}", c.source.source(span));
 
-        let expected = c.scopes.push_child(span)?;
+        let guard = c.scopes.push();
         let mut size_hint = 0;
         let mut expansions = 0;
+
+        let mut values = Vec::new();
 
         for expr in &self.exprs {
             if let ast::Expr::Lit(expr_lit) = expr {
@@ -23,19 +25,22 @@ impl Assemble for BuiltInTemplate {
 
                     let slot = c.unit.new_static_string(span, &s)?;
                     c.asm.push(Inst::String { slot }, span);
-                    c.scopes.decl_anon(span)?;
+                    c.scopes.unnamed(span);
                     continue;
                 }
             }
 
             expansions += 1;
-            expr.assemble(c, Needs::Value)?.push(c)?;
-            c.scopes.decl_anon(span)?;
+            values.push(expr.assemble(c, Needs::Value)?);
         }
 
         if self.from_literal && expansions == 0 {
             c.warnings
                 .template_without_expansions(c.source_id, span, c.context());
+        }
+
+        for value in values {
+            value.pop(c)?;
         }
 
         c.asm.push(
@@ -46,11 +51,13 @@ impl Assemble for BuiltInTemplate {
             span,
         );
 
+        guard.pop(span, c)?;
+
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        let _ = c.scopes.pop(expected, span)?;
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

@@ -10,45 +10,32 @@ impl AssembleClosure for ast::ExprClosure {
         let span = self.span();
         log::trace!("ExprClosure => {:?}", c.source.source(span));
 
-        let count = {
-            let mut patterns = Vec::new();
-
-            for (arg, _) in self.args.as_slice() {
-                match arg {
-                    ast::FnArg::SelfValue(s) => {
-                        return Err(CompileError::new(s, CompileErrorKind::UnsupportedSelf))
-                    }
-                    ast::FnArg::Pat(pat) => {
-                        let offset = c.scopes.decl_anon(pat.span())?;
-                        patterns.push((pat, offset));
-                    }
+        for (arg, _) in self.args.as_slice() {
+            match arg {
+                ast::FnArg::SelfValue(s) => {
+                    return Err(CompileError::new(s, CompileErrorKind::UnsupportedSelf))
+                }
+                ast::FnArg::Pat(pat) => {
+                    let value = Value::unnamed(pat.span(), c);
+                    c.compile_pat_offset(pat, value)?;
                 }
             }
-
-            if !captures.is_empty() {
-                c.asm.push(Inst::PushTuple, span);
-
-                for capture in captures {
-                    c.scopes.new_var(&capture.ident, span)?;
-                }
-            }
-
-            for (pat, offset) in patterns {
-                c.compile_pat_offset(pat, offset)?;
-            }
-
-            c.scopes.total_var_count(span)?
-        };
-
-        self.body.assemble(c, Needs::Value)?.push(c)?;
-
-        if count != 0 {
-            c.asm.push(Inst::Clean { count }, span);
         }
 
-        c.asm.push(Inst::Return, span);
+        if !captures.is_empty() {
+            c.asm.push(Inst::PushTuple, span);
 
-        c.scopes.pop_last(span)?;
+            for capture in captures {
+                c.scopes.named(&capture.ident, span)?;
+            }
+        }
+
+        // NB: will be popped by return values.
+        let ret = self.body.assemble(c, Needs::Value)?;
+        c.custom_clean(span, Needs::Value, c.scopes.totals())?;
+
+        ret.pop(c)?;
+        c.asm.push(Inst::Return, span);
         Ok(())
     }
 }
@@ -61,7 +48,7 @@ impl Assemble for ast::ExprClosure {
 
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Value::top(span));
+            return Ok(Value::empty(span));
         }
 
         let item = c.query.item_for(self)?;
@@ -126,6 +113,6 @@ impl Assemble for ast::ExprClosure {
             );
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

@@ -40,17 +40,21 @@ mod lit_str;
 mod local;
 mod prelude;
 
-use crate::compiling::{CompileError, CompileErrorKind, CompileResult, Compiler, Needs};
+use crate::compiling::{CompileError, CompileResult, Compiler, Needs, VarId, VarOffset};
 use runestick::{CompileMetaCapture, Inst, InstAddress, Span};
 
-#[derive(Debug)]
-#[must_use = "must be consumed to make sure the value is realized"]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Value {
     span: Span,
     kind: ValueKind,
 }
 
 impl Value {
+    /// Test if value is empty.
+    pub(crate) fn is_present(&self) -> bool {
+        matches!(&self.kind, ValueKind::Var(..))
+    }
+
     /// Construct a value that is not produced at all.
     pub(crate) fn empty(span: Span) -> Self {
         Self {
@@ -59,104 +63,145 @@ impl Value {
         }
     }
 
-    /// Construct a value that is produced at the top of the stack.
-    pub(crate) fn top(span: Span) -> Self {
+    /// Construct a value that is not reachable.
+    pub(crate) fn unreachable(span: Span) -> Self {
         Self {
             span,
-            kind: ValueKind::Top,
+            kind: ValueKind::Unreachable,
         }
     }
 
     /// Declare that the assembly resulted in a value in a offset location.
-    pub(crate) fn offset(span: Span, offset: usize) -> Self {
+    pub(crate) fn var(span: Span, id: VarId) -> Self {
         Self {
             span,
-            kind: ValueKind::Offset(offset),
+            kind: ValueKind::Var(id),
         }
     }
 
-    /// Make sure the value is pushed on top of the stack.
-    pub(crate) fn push(self, c: &mut Compiler) -> CompileResult<()> {
-        match self.kind {
-            ValueKind::Empty => {
-                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
-            }
-            ValueKind::Top => (),
-            ValueKind::Offset(offset) => {
-                c.asm.push(Inst::Copy { offset }, self.span);
-            }
-        }
+    /// Helper to construct a new unnamed value.
+    pub(crate) fn unnamed(span: Span, c: &mut Compiler<'_>) -> Self {
+        let id = c.scopes.unnamed(span);
+        Self::var(span, id)
+    }
 
-        Ok(())
+    /// Get the offset of the value.
+    pub(crate) fn offset(self, c: &mut Compiler<'_>) -> CompileResult<usize> {
+        let id = self.into_var()?;
+        Ok(c.scopes.var_of(self.span, id)?.offset)
     }
 
     /// Ignore the produced value.
     pub(crate) fn ignore(self, c: &mut Compiler) -> CompileResult<()> {
         match self.kind {
+            ValueKind::Unreachable => (),
             ValueKind::Empty => (),
-            ValueKind::Top => {
-                c.asm.push(Inst::Pop, self.span);
-            }
-            ValueKind::Offset(..) => (),
+            ValueKind::Var(id) => match c.scopes.offset_of(self.span, id)? {
+                VarOffset::Offset(..) => (),
+                VarOffset::Top => {
+                    c.scopes.stack_pop(self.span)?;
+                    c.asm.push(Inst::Pop, self.span);
+                }
+            },
         }
 
         Ok(())
     }
 
-    /// Assemble into an address.
-    ///
-    /// # Usage
-    ///
-    /// In order to use this, you should declare a child scope that you control.
-    /// The targeted operation will clean up any values on the stack if it
-    /// references e.g. stack top values, but you must make sure that the stack
-    /// state in the compiler is balanced by giving it a scope to operate in.
-    ///
-    /// Clean up is done with:
-    ///
-    /// ```rust,ignore
-    /// let guard = c.scopes.push_child(span)?;
-    /// // perform targeted operations.
-    /// c.scopes.pop(guard, span)?;
-    /// ```
-    pub(crate) fn address(self, _: &mut Compiler) -> CompileResult<InstAddress> {
-        let address = match self.kind {
-            ValueKind::Empty => {
-                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
+    /// Make sure a value is on the top of the stack, with the intent of
+    /// immediately consuming it.
+    pub(crate) fn pop(self, c: &mut Compiler) -> CompileResult<()> {
+        let id = self.into_var()?;
+
+        match c.scopes.offset_of(self.span, id)? {
+            VarOffset::Offset(offset) => {
+                c.asm.push(Inst::Copy { offset }, self.span);
             }
-            ValueKind::Top => InstAddress::Top,
-            ValueKind::Offset(offset) => InstAddress::Offset(offset),
+            VarOffset::Top => {
+                c.scopes.stack_pop(self.span)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Make sure a value is on the top of the stack, with the intent of
+    /// consuming it immediately after.
+    pub(crate) fn copy(self, c: &mut Compiler) -> CompileResult<()> {
+        let id = self.into_var()?;
+
+        match c.scopes.offset_of(self.span, id)? {
+            VarOffset::Offset(offset) => {
+                c.asm.push(Inst::Copy { offset }, self.span);
+            }
+            VarOffset::Top => {
+                c.asm.push(Inst::Dup, self.span);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Assemble a non-destructive stack address.
+    pub(crate) fn address(self, c: &mut Compiler) -> CompileResult<InstAddress> {
+        let id = self.into_var()?;
+
+        let address = match c.scopes.offset_of(self.span, id)? {
+            VarOffset::Offset(offset) => InstAddress::Offset(offset),
+            VarOffset::Top => InstAddress::Last,
         };
 
         Ok(address)
     }
 
-    /// Declare a variable based on the assembled result.
-    pub(crate) fn decl_var(&self, c: &mut Compiler, ident: &str) -> CompileResult<()> {
-        match self.kind {
-            ValueKind::Empty => {
-                return Err(CompileError::new(self.span, CompileErrorKind::ValueEmpty))
-            }
-            ValueKind::Top => {
-                c.scopes.decl_var(ident, self.span)?;
-            }
-            ValueKind::Offset(offset) => {
-                c.scopes.decl_var_with_offset(ident, offset, self.span)?;
-            }
-        }
+    /// Assemble into an address  with the intent of immediately consuming the
+    /// stack value if its at the top.
+    pub(crate) fn consume_into_address(self, c: &mut Compiler) -> CompileResult<InstAddress> {
+        let id = self.into_var()?;
 
+        let address = match c.scopes.offset_of(self.span, id)? {
+            VarOffset::Offset(offset) => InstAddress::Offset(offset),
+            VarOffset::Top => {
+                c.scopes.stack_pop(self.span)?;
+                InstAddress::Top
+            }
+        };
+
+        Ok(address)
+    }
+
+    /// Declare the current value as a variable with the given name.
+    pub(crate) fn decl(self, c: &mut Compiler, name: &str) -> CompileResult<()> {
+        let id = self.into_var()?;
+        c.scopes.named_with_id(name, id, self.span)?;
         Ok(())
+    }
+
+    fn into_var(self) -> CompileResult<VarId> {
+        match self.kind {
+            ValueKind::Unreachable => {
+                return Err(CompileError::msg(
+                    self.span,
+                    "tried to use an unreachable value",
+                ));
+            }
+            ValueKind::Empty => {
+                return Err(CompileError::msg(self.span, "tried to use an empty value"))
+            }
+            ValueKind::Var(id) => Ok(id),
+        }
     }
 }
 
-#[derive(Debug)]
+/// The kind of a stack value.
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum ValueKind {
     /// No value produced.
     Empty,
-    /// Result produced at top of the stack.
-    Top,
-    /// Result belongs to the the given stack offset.
-    Offset(usize),
+    /// Value is not reachable.
+    Unreachable,
+    /// Result belongs to the the specified variable.
+    Var(VarId),
 }
 
 /// Compiler trait implemented for things that can be compiled.

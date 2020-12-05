@@ -12,7 +12,10 @@ impl Assemble for ast::ExprAssign {
                 let span = path.span();
 
                 if let Some(ident) = path.try_as_ident() {
-                    let target = self.rhs.assemble(c, Needs::Value)?.address(c)?;
+                    let target = self
+                        .rhs
+                        .assemble(c, Needs::Value)?
+                        .consume_into_address(c)?;
                     let ident = ident.resolve(c.storage, &*c.source)?;
 
                     let var = c
@@ -20,7 +23,7 @@ impl Assemble for ast::ExprAssign {
                         .get_var_mut(&*ident, c.source_id, c.visitor, span)?;
 
                     match target {
-                        InstAddress::Top => {
+                        InstAddress::Top | InstAddress::Last => {
                             c.asm.push(Inst::Replace { offset: var.offset }, span);
                         }
                         InstAddress::Offset(offset) => {
@@ -43,14 +46,13 @@ impl Assemble for ast::ExprAssign {
                         let slot = index.resolve(c.storage, &*c.source)?;
                         let slot = c.unit.new_static_string(index, slot.as_ref())?;
 
-                        self.rhs.assemble(c, Needs::Value)?.push(c)?;
-                        c.scopes.decl_anon(self.rhs.span())?;
+                        let rhs = self.rhs.assemble(c, Needs::Value)?;
+                        let expr = field_access.expr.assemble(c, Needs::Value)?;
 
-                        field_access.expr.assemble(c, Needs::Value)?.push(c)?;
-                        c.scopes.decl_anon(span)?;
+                        expr.pop(c)?;
+                        rhs.pop(c)?;
 
                         c.asm.push(Inst::ObjectIndexSet { slot }, span);
-                        c.scopes.undecl_anon(span, 2)?;
                         true
                     }
                     ast::ExprField::LitNumber(field) => {
@@ -62,12 +64,13 @@ impl Assemble for ast::ExprAssign {
                             )
                         })?;
 
-                        self.rhs.assemble(c, Needs::Value)?.push(c)?;
-                        c.scopes.decl_anon(self.rhs.span())?;
+                        let rhs = self.rhs.assemble(c, Needs::Value)?;
+                        let expr = field_access.expr.assemble(c, Needs::Value)?;
 
-                        field_access.expr.assemble(c, Needs::Value)?.push(c)?;
+                        expr.pop(c)?;
+                        rhs.pop(c)?;
+
                         c.asm.push(Inst::TupleIndexSet { index }, span);
-                        c.scopes.undecl_anon(span, 1)?;
                         true
                     }
                 }
@@ -76,17 +79,15 @@ impl Assemble for ast::ExprAssign {
                 let span = expr_index_get.span();
                 log::trace!("ExprIndexSet => {:?}", c.source.source(span));
 
-                self.rhs.assemble(c, Needs::Value)?.push(c)?;
-                c.scopes.decl_anon(span)?;
+                let rhs = self.rhs.assemble(c, Needs::Value)?;
+                let target = expr_index_get.target.assemble(c, Needs::Value)?;
+                let index = expr_index_get.index.assemble(c, Needs::Value)?;
 
-                expr_index_get.target.assemble(c, Needs::Value)?.push(c)?;
-                c.scopes.decl_anon(span)?;
-
-                expr_index_get.index.assemble(c, Needs::Value)?.push(c)?;
-                c.scopes.decl_anon(span)?;
+                index.pop(c)?;
+                target.pop(c)?;
+                rhs.pop(c)?;
 
                 c.asm.push(Inst::IndexSet, span);
-                c.scopes.undecl_anon(span, 3)?;
                 true
             }
             _ => false,
@@ -99,10 +100,11 @@ impl Assemble for ast::ExprAssign {
             ));
         }
 
-        if needs.value() {
-            c.asm.push(Inst::unit(), span);
+        if !needs.value() {
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        c.asm.push(Inst::unit(), span);
+        Ok(Value::unnamed(span, c))
     }
 }

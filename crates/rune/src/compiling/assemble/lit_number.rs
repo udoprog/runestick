@@ -11,7 +11,7 @@ impl Assemble for ast::LitNumber {
         // NB: don't encode unecessary literal.
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Value::top(span));
+            return Ok(Value::empty(span));
         }
 
         let number = self.resolve(&c.storage, &*c.source)?;
@@ -35,6 +35,6 @@ impl Assemble for ast::LitNumber {
             }
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

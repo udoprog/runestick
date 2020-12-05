@@ -1204,6 +1204,8 @@ impl fmt::Display for Inst {
 pub enum InstAddress {
     /// Addressed from the top of the stack.
     Top,
+    /// Peek the last value.
+    Last,
     /// Value addressed at the given offset.
     Offset(usize),
 }
@@ -1212,6 +1214,7 @@ impl fmt::Display for InstAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Top => write!(f, "top"),
+            Self::Last => write!(f, "last"),
             Self::Offset(offset) => write!(f, "offset({})", offset),
         }
     }

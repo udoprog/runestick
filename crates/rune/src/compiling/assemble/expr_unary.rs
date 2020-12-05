@@ -35,11 +35,11 @@ impl Assemble for ast::ExprUnary {
                     }
                 }
 
-                return Ok(Value::top(span));
+                return Ok(Value::unnamed(span, c));
             }
         }
 
-        self.expr.assemble(c, Needs::Value)?.push(c)?;
+        self.expr.assemble(c, Needs::Value)?.pop(c)?;
 
         match self.op {
             ast::UnOp::Not { .. } => {
@@ -60,8 +60,9 @@ impl Assemble for ast::ExprUnary {
         // But if we don't need the value, then pop it from the stack.
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

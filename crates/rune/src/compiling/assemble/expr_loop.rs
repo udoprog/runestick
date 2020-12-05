@@ -9,7 +9,7 @@ impl Assemble for ast::ExprLoop {
         let continue_label = c.asm.new_label("loop_continue");
         let break_label = c.asm.new_label("loop_break");
 
-        let var_count = c.scopes.total_var_count(span)?;
+        let var_count = c.scopes.totals();
 
         let _guard = c.loops.push(Loop {
             label: self.label.map(|(label, _)| label),
@@ -22,10 +22,14 @@ impl Assemble for ast::ExprLoop {
         });
 
         c.asm.label(continue_label)?;
-        self.body.assemble(c, Needs::None)?.push(c)?;
+        self.body.assemble(c, Needs::None)?.ignore(c)?;
         c.asm.jump(continue_label, span);
         c.asm.label(break_label)?;
 
-        Ok(Value::top(span))
+        if !needs.value() {
+            return Ok(Value::empty(span));
+        }
+
+        Ok(Value::unnamed(span, c))
     }
 }

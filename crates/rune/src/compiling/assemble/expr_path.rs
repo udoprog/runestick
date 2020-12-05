@@ -9,26 +9,29 @@ impl Assemble for ast::Path {
         if let Some(ast::PathKind::SelfValue) = self.as_kind() {
             let var = c.scopes.get_var("self", c.source_id, c.visitor, span)?;
 
-            if needs.value() {
-                var.copy(&mut c.asm, span, "self");
+            if !needs.value() {
+                return Ok(Value::empty(span));
             }
 
-            return Ok(Value::top(span));
+            var.copy(&mut c.asm, span, "self");
+            return Ok(Value::unnamed(span, c));
         }
 
         let named = c.convert_path_to_named(self)?;
 
         if let Needs::Value = needs {
             if let Some(local) = named.as_local() {
-                if let Some(var) = c.scopes.try_get_var(local, c.source_id, c.visitor, span)? {
-                    return Ok(Value::offset(span, var.offset));
+                if let Some((_, id)) =
+                    c.scopes
+                        .try_get_var_with_id(local, c.source_id, c.visitor, span)?
+                {
+                    return Ok(Value::var(span, id));
                 }
             }
         }
 
         if let Some(meta) = c.try_lookup_meta(span, &named.item)? {
-            c.compile_meta(&meta, span, needs)?;
-            return Ok(Value::top(span));
+            return c.compile_meta(&meta, span, needs);
         }
 
         if let (Needs::Value, Some(local)) = (needs, named.as_local()) {

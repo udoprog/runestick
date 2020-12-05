@@ -20,7 +20,7 @@ impl Assemble for ast::ExprIf {
 
         // use fallback as fall through.
         if let Some(fallback) = &self.expr_else {
-            fallback.block.assemble(c, needs)?.push(c)?;
+            fallback.block.assemble(c, needs)?;
         } else {
             // NB: if we must produce a value and there is no fallback branch,
             // encode the result of the statement as a unit.
@@ -33,9 +33,10 @@ impl Assemble for ast::ExprIf {
 
         c.asm.label(then_label)?;
 
-        let expected = c.scopes.push(then_scope);
-        self.block.assemble(c, needs)?.push(c)?;
-        c.clean_last_scope(span, expected, needs)?;
+        let guard = c.scopes.push_scope(span, then_scope)?;
+        self.block.assemble(c, needs)?;
+        c.locals_clean(span, needs)?;
+        guard.pop(span, c)?;
 
         if !self.expr_else_ifs.is_empty() {
             c.asm.jump(end_label, span);
@@ -48,9 +49,12 @@ impl Assemble for ast::ExprIf {
 
             c.asm.label(label)?;
 
-            let scopes = c.scopes.push(scope);
-            branch.block.assemble(c, needs)?.push(c)?;
-            c.clean_last_scope(span, scopes, needs)?;
+            // NB: we do some temporary scope switcheroo here, since the scopes
+            // have been prepared beforehand.
+            let guard = c.scopes.push_scope(span, scope)?;
+            branch.block.assemble(c, needs)?;
+            c.locals_clean(span, needs)?;
+            guard.pop(span, c)?;
 
             if it.peek().is_some() {
                 c.asm.jump(end_label, span);
@@ -58,6 +62,11 @@ impl Assemble for ast::ExprIf {
         }
 
         c.asm.label(end_label)?;
-        Ok(Value::top(span))
+
+        if !needs.value() {
+            return Ok(Value::empty(span));
+        }
+
+        Ok(Value::unnamed(span, c))
     }
 }

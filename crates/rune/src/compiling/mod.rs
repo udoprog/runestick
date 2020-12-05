@@ -17,7 +17,7 @@ mod unit_builder;
 
 pub use self::compile_error::{CompileError, CompileErrorKind, CompileResult, ImportEntryStep};
 pub use self::compile_visitor::{CompileVisitor, NoopCompileVisitor};
-pub use self::scopes::Var;
+pub use self::scopes::{Var, VarId, VarOffset};
 pub use self::unit_builder::{BuildError, InsertMetaError, LinkerError, UnitBuilder};
 use crate::parsing::Resolve as _;
 
@@ -25,7 +25,7 @@ pub(crate) use self::assemble::{Assemble, AssembleClosure, AssembleConst, Assemb
 pub(crate) use self::assembly::{Assembly, AssemblyInst};
 pub(crate) use self::compiler::{Compiler, Needs};
 pub(crate) use self::loops::{Loop, Loops};
-pub(crate) use self::scopes::{Scope, ScopeGuard, Scopes};
+pub(crate) use self::scopes::{Scope, Scopes};
 
 /// Compile the given source with default options.
 pub fn compile(

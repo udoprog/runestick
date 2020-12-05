@@ -133,6 +133,7 @@ impl Stack {
     pub fn address(&mut self, address: InstAddress) -> Result<Value, StackError> {
         Ok(match address {
             InstAddress::Top => self.pop()?,
+            InstAddress::Last => self.last()?.clone(),
             InstAddress::Offset(offset) => self.at_offset(offset)?.clone(),
         })
     }
@@ -141,6 +142,7 @@ impl Stack {
     pub fn address_ref(&mut self, address: InstAddress) -> Result<Cow<'_, Value>, StackError> {
         Ok(match address {
             InstAddress::Top => Cow::Owned(self.pop()?),
+            InstAddress::Last => Cow::Borrowed(self.last()?),
             InstAddress::Offset(offset) => Cow::Borrowed(self.at_offset(offset)?),
         })
     }

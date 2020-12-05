@@ -49,6 +49,7 @@ impl Assemble for ast::ExprBlock {
                 if !needs.value() {
                     c.asm
                         .push_with_comment(Inst::Pop, span, "value is not needed");
+                    return Ok(Value::empty(span));
                 }
             }
             CompileMetaKind::Const { const_value } => {
@@ -59,6 +60,6 @@ impl Assemble for ast::ExprBlock {
             }
         };
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

@@ -53,11 +53,12 @@ impl Assemble for ast::Expr {
             ast::Expr::Item(decl) => {
                 let span = decl.span();
 
-                if needs.value() {
+                if !needs.value() {
+                    Value::empty(span)
+                } else {
                     c.asm.push(Inst::unit(), span);
+                    Value::unnamed(span, c)
                 }
-
-                Value::top(span)
             }
         };
 

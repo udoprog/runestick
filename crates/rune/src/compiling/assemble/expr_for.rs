@@ -10,47 +10,38 @@ impl Assemble for ast::ExprFor {
         let end_label = c.asm.new_label("for_end");
         let break_label = c.asm.new_label("for_break");
 
-        let break_var_count = c.scopes.total_var_count(span)?;
+        let break_var_count = c.scopes.totals();
 
-        let (iter_offset, loop_scope_expected) = {
-            let loop_scope_expected = c.scopes.push_child(span)?;
-            self.iter.assemble(c, Needs::Value)?.push(c)?;
+        let iter_var = {
+            self.iter.assemble(c, Needs::Value)?.pop(c)?;
 
-            let iter_offset = c.scopes.decl_anon(span)?;
+            let iter_var = c.scopes.unnamed(span);
             c.asm.push_with_comment(
                 Inst::CallInstance {
                     hash: *runestick::Protocol::INTO_ITER,
                     args: 0,
                 },
                 span,
-                format!("into_iter (offset: {})", iter_offset),
+                format!("into_iter (offset: {})", iter_var),
             );
 
-            (iter_offset, loop_scope_expected)
+            Value::var(span, iter_var)
         };
 
         let binding_span = self.binding.span();
 
         // Declare named loop variable.
-        let binding_offset = {
+        let binding_var = {
             c.asm.push(Inst::unit(), self.iter.span());
-            c.scopes.decl_anon(binding_span)?
+            Value::unnamed(binding_span, c)
         };
 
         // Declare storage for memoized `next` instance fn.
-        let next_offset = if c.options.memoize_instance_fn {
+        let next = if c.options.memoize_instance_fn {
             let span = self.iter.span();
 
-            let offset = c.scopes.decl_anon(span)?;
-
             // Declare the named loop variable and put it in the scope.
-            c.asm.push_with_comment(
-                Inst::Copy {
-                    offset: iter_offset,
-                },
-                span,
-                "copy iterator (memoize)",
-            );
+            iter_var.copy(c)?;
 
             c.asm.push_with_comment(
                 Inst::LoadInstanceFn {
@@ -60,12 +51,12 @@ impl Assemble for ast::ExprFor {
                 "load instance fn (memoize)",
             );
 
-            Some(offset)
+            Some(Value::unnamed(span, c))
         } else {
             None
         };
 
-        let continue_var_count = c.scopes.total_var_count(span)?;
+        let continue_var_count = c.scopes.totals();
         c.asm.label(continue_label)?;
 
         let _guard = c.loops.push(Loop {
@@ -75,44 +66,22 @@ impl Assemble for ast::ExprFor {
             break_label,
             break_var_count,
             needs,
-            drop: Some(iter_offset),
+            drop: Some(iter_var),
         });
 
         // Use the memoized loop variable.
-        if let Some(next_offset) = next_offset {
-            c.asm.push_with_comment(
-                Inst::Copy {
-                    offset: iter_offset,
-                },
-                self.iter.span(),
-                "copy iterator",
-            );
-
-            c.asm.push_with_comment(
-                Inst::Copy {
-                    offset: next_offset,
-                },
-                self.iter.span(),
-                "copy next",
-            );
+        if let Some(next) = next {
+            iter_var.copy(c)?;
+            next.copy(c)?;
 
             c.asm.push(Inst::CallFn { args: 1 }, span);
 
-            c.asm.push(
-                Inst::Replace {
-                    offset: binding_offset,
-                },
-                binding_span,
-            );
+            let offset = binding_var.offset(c)?;
+            c.asm.push(Inst::Replace { offset }, binding_span);
         } else {
             // call the `next` function to get the next level of iteration, bind the
             // result to the loop variable in the loop.
-            c.asm.push(
-                Inst::Copy {
-                    offset: iter_offset,
-                },
-                self.iter.span(),
-            );
+            iter_var.copy(c)?;
 
             c.asm.push_with_comment(
                 Inst::CallInstance {
@@ -122,45 +91,42 @@ impl Assemble for ast::ExprFor {
                 span,
                 "next",
             );
-            c.asm.push(
-                Inst::Replace {
-                    offset: binding_offset,
-                },
-                binding_span,
-            );
+
+            let offset = binding_var.offset(c)?;
+            c.asm.push(Inst::Replace { offset }, binding_span);
         }
 
         // Test loop condition and unwrap the option, or jump to `end_label` if the current value is `None`.
-        c.asm.iter_next(binding_offset, end_label, binding_span);
+        let offset = binding_var.offset(c)?;
+        c.asm.iter_next(offset, end_label, binding_span);
 
-        let body_span = self.body.span();
-        let guard = c.scopes.push_child(body_span)?;
+        let guard = c.scopes.push();
 
-        c.compile_pat_offset(&self.binding, binding_offset)?;
+        c.compile_pat_offset(&self.binding, binding_var)?;
 
-        self.body.assemble(c, Needs::None)?.push(c)?;
-        c.clean_last_scope(span, guard, Needs::None)?;
+        self.body.assemble(c, Needs::None)?.ignore(c)?;
+
+        c.locals_clean(span, Needs::None)?;
+        guard.pop(span, c)?;
 
         c.asm.jump(continue_label, span);
         c.asm.label(end_label)?;
 
         // Drop the iterator.
-        c.asm.push(
-            Inst::Drop {
-                offset: iter_offset,
-            },
-            span,
-        );
+        let offset = iter_var.offset(c)?;
+        c.asm.push(Inst::Drop { offset }, span);
 
-        c.clean_last_scope(span, loop_scope_expected, Needs::None)?;
-
-        // NB: If a value is needed from a for loop, encode it as a unit.
-        if needs.value() {
-            c.asm.push(Inst::unit(), span);
-        }
+        c.locals_clean(span, Needs::None)?;
 
         // NB: breaks produce their own value.
         c.asm.label(break_label)?;
-        Ok(Value::top(span))
+
+        // NB: If a value is needed from a for loop, encode it as a unit.
+        if needs.value() {
+            return Ok(Value::empty(span));
+        }
+
+        c.asm.push(Inst::unit(), span);
+        Ok(Value::unnamed(span, c))
     }
 }

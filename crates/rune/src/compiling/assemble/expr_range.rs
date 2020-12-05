@@ -6,18 +6,18 @@ impl Assemble for ast::ExprRange {
         let span = self.span();
         log::trace!("ExprRange => {:?}", c.source.source(span));
 
-        let guard = c.scopes.push_child(span)?;
+        let guard = c.scopes.push();
 
         if needs.value() {
             let from = if let Some(from) = &self.from {
-                from.assemble(c, needs)?.push(c)?;
+                from.assemble(c, needs)?.pop(c)?;
                 c.asm.push(
                     Inst::Variant {
                         variant: InstVariant::Some,
                     },
                     from.span(),
                 );
-                from.span()
+                Value::unnamed(from.span(), c)
             } else {
                 c.asm.push(
                     Inst::Variant {
@@ -25,20 +25,18 @@ impl Assemble for ast::ExprRange {
                     },
                     span,
                 );
-                span
+                Value::unnamed(span, c)
             };
 
-            c.scopes.decl_anon(from)?;
-
             let to = if let Some(to) = &self.to {
-                to.assemble(c, needs)?.push(c)?;
+                to.assemble(c, needs)?.pop(c)?;
                 c.asm.push(
                     Inst::Variant {
                         variant: InstVariant::Some,
                     },
                     to.span(),
                 );
-                to.span()
+                Value::unnamed(to.span(), c)
             } else {
                 c.asm.push(
                     Inst::Variant {
@@ -46,29 +44,35 @@ impl Assemble for ast::ExprRange {
                     },
                     span,
                 );
-                span
+                Value::unnamed(span, c)
             };
-
-            c.scopes.decl_anon(to)?;
 
             let limits = match &self.limits {
                 ast::ExprRangeLimits::HalfOpen(..) => InstRangeLimits::HalfOpen,
                 ast::ExprRangeLimits::Closed(..) => InstRangeLimits::Closed,
             };
 
+            to.pop(c)?;
+            from.pop(c)?;
+
             c.asm.push(Inst::Range { limits }, span);
-            c.scopes.undecl_anon(span, 2)?;
         } else {
             if let Some(from) = &self.from {
-                from.assemble(c, needs)?.push(c)?;
+                from.assemble(c, needs)?;
             }
 
             if let Some(to) = &self.to {
-                to.assemble(c, needs)?.push(c)?;
+                to.assemble(c, needs)?;
             }
         }
 
-        c.scopes.pop(guard, span)?;
-        Ok(Value::top(span))
+        guard.pop(span, c)?;
+
+        if !needs.value() {
+            c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
+        }
+
+        Ok(Value::unnamed(span, c))
     }
 }

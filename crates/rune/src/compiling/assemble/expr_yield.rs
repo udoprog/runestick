@@ -7,7 +7,7 @@ impl Assemble for ast::ExprYield {
         log::trace!("ExprYield => {:?}", c.source.source(span));
 
         if let Some(expr) = &self.expr {
-            expr.assemble(c, Needs::Value)?.push(c)?;
+            expr.assemble(c, Needs::Value)?.pop(c)?;
             c.asm.push(Inst::Yield, span);
         } else {
             c.asm.push(Inst::YieldUnit, span);
@@ -15,8 +15,9 @@ impl Assemble for ast::ExprYield {
 
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

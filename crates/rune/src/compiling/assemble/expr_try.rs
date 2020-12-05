@@ -8,24 +8,23 @@ impl Assemble for ast::ExprTry {
 
         let not_error = c.asm.new_label("try_not_error");
 
-        self.expr.assemble(c, Needs::Value)?.push(c)?;
+        self.expr.assemble(c, Needs::Value)?.pop(c)?;
         c.asm.push(Inst::Dup, span);
         c.asm.push(Inst::IsValue, span);
         c.asm.jump_if(not_error, span);
 
         // Clean up all locals so far and return from the current function.
-        let total_var_count = c.scopes.total_var_count(span)?;
-        c.locals_clean(total_var_count, span);
+        c.custom_clean(span, Needs::Value, c.scopes.totals())?;
         c.asm.push(Inst::Return, span);
 
         c.asm.label(not_error)?;
 
-        if needs.value() {
-            c.asm.push(Inst::Unwrap, span);
-        } else {
+        if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        c.asm.push(Inst::Unwrap, span);
+        Ok(Value::unnamed(span, c))
     }
 }

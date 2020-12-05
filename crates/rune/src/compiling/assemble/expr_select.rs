@@ -34,7 +34,7 @@ impl Assemble for ast::ExprSelect {
         }
 
         for (_, branch) in &branches {
-            branch.expr.assemble(c, Needs::Value)?.push(c)?;
+            branch.expr.assemble(c, Needs::Value)?.pop(c)?;
         }
 
         c.asm.push(Inst::Select { len }, span);
@@ -58,7 +58,7 @@ impl Assemble for ast::ExprSelect {
             let span = branch.span();
             c.asm.label(label)?;
 
-            let expected = c.scopes.push_child(span)?;
+            let expected = c.scopes.push();
 
             // NB: loop is actually useful.
             #[allow(clippy::never_loop)]
@@ -68,7 +68,7 @@ impl Assemble for ast::ExprSelect {
                         let named = c.convert_path_to_named(&path.path)?;
 
                         if let Some(local) = named.as_local() {
-                            c.scopes.decl_var(local, path.span())?;
+                            c.scopes.named(local, path.span())?;
                             break;
                         }
                     }
@@ -86,14 +86,14 @@ impl Assemble for ast::ExprSelect {
             }
 
             // Set up a new scope with the binding.
-            branch.body.assemble(c, needs)?.push(c)?;
-            c.clean_last_scope(span, expected, needs)?;
+            branch.body.assemble(c, needs)?;
+            expected.pop(span, c)?;
             c.asm.jump(end_label, span);
         }
 
         if let Some((branch, label)) = default_branch {
             c.asm.label(label)?;
-            branch.body.assemble(c, needs)?.push(c)?;
+            branch.body.assemble(c, needs)?.pop(c)?;
         }
 
         c.asm.label(end_label)?;
@@ -102,6 +102,10 @@ impl Assemble for ast::ExprSelect {
             .pop()
             .ok_or_else(|| CompileError::msg(&span, "missing parent context"))?;
 
-        Ok(Value::top(span))
+        if !needs.value() {
+            return Ok(Value::empty(span));
+        }
+
+        Ok(Value::unnamed(span, c))
     }
 }

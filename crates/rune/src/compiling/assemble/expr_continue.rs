@@ -25,13 +25,12 @@ impl Assemble for ast::ExprContinue {
 
         let vars = c
             .scopes
-            .total_var_count(span)?
+            .totals()
             .checked_sub(last_loop.continue_var_count)
             .ok_or_else(|| CompileError::msg(&span, "var count should be larger"))?;
 
-        c.locals_pop(vars, span);
-
+        c.custom_clean(span, Needs::None, vars)?;
         c.asm.jump(last_loop.continue_label, span);
-        Ok(Value::top(span))
+        Ok(Value::unreachable(span))
     }
 }

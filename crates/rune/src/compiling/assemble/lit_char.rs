@@ -9,11 +9,12 @@ impl Assemble for ast::LitChar {
         // NB: Elide the entire literal if it's not needed.
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Value::top(span));
+            return Ok(Value::empty(span));
         }
 
         let ch = self.resolve(&c.storage, &*c.source)?;
         c.asm.push(Inst::char(ch), span);
-        Ok(Value::top(span))
+
+        Ok(Value::unnamed(span, c))
     }
 }

@@ -8,8 +8,7 @@ impl Assemble for ast::ExprLet {
 
         let load = |c: &mut Compiler, needs: Needs| {
             // NB: assignments "move" the value being assigned.
-            self.expr.assemble(c, needs)?.push(c)?;
-            Ok(Value::top(span))
+            self.expr.assemble(c, needs)
         };
 
         let false_label = c.asm.new_label("let_panic");
@@ -32,10 +31,11 @@ impl Assemble for ast::ExprLet {
         }
 
         // If a value is needed for a let expression, it is evaluated as a unit.
-        if needs.value() {
-            c.asm.push(Inst::unit(), span);
+        if !needs.value() {
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        c.asm.push(Inst::unit(), span);
+        Ok(Value::unnamed(span, c))
     }
 }

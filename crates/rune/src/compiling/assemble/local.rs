@@ -28,10 +28,11 @@ impl Assemble for ast::Local {
         }
 
         // If a value is needed for a let expression, it is evaluated as a unit.
-        if needs.value() {
-            c.asm.push(Inst::unit(), span);
+        if !needs.value() {
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        c.asm.push(Inst::unit(), span);
+        Ok(Value::unnamed(span, c))
     }
 }

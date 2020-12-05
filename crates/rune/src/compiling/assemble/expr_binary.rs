@@ -17,19 +17,22 @@ impl Assemble for ast::ExprBinary {
 
         // Special expressions which operates on the stack in special ways.
         if self.op.is_assign() {
-            compile_assign_binop(c, &self.lhs, &self.rhs, self.op, needs)?;
-            return Ok(Value::top(span));
+            let value = compile_assign_binop(c, &self.lhs, &self.rhs, self.op, needs)?;
+            return Ok(value);
         }
 
         if self.op.is_conditional() {
-            compile_conditional_binop(c, &self.lhs, &self.rhs, self.op, needs)?;
-            return Ok(Value::top(span));
+            let value = compile_conditional_binop(c, &self.lhs, &self.rhs, self.op, needs)?;
+            return Ok(value);
         }
 
         // NB: need to declare these as anonymous local variables so that they
         // get cleaned up in case there is an early break (return, try, ...).
-        let a = self.lhs.assemble(c, Needs::Value)?.address(c)?;
-        let b = self.rhs.assemble(c, rhs_needs_of(self.op))?.address(c)?;
+        let a = self.lhs.assemble(c, Needs::Value)?;
+        let b = self.rhs.assemble(c, rhs_needs_of(self.op))?;
+
+        let b = b.consume_into_address(c)?;
+        let a = a.consume_into_address(c)?;
 
         let op = match self.op {
             ast::BinOp::Eq => InstOp::Eq,
@@ -67,9 +70,10 @@ impl Assemble for ast::ExprBinary {
         // But if we don't need the value, then pop it from the stack.
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }
 
@@ -88,12 +92,11 @@ fn compile_conditional_binop(
     rhs: &ast::Expr,
     bin_op: ast::BinOp,
     needs: Needs,
-) -> CompileResult<()> {
+) -> CompileResult<Value> {
     let span = lhs.span().join(rhs.span());
 
     let end_label = c.asm.new_label("conditional_end");
-
-    lhs.assemble(c, Needs::Value)?.push(c)?;
+    lhs.assemble(c, Needs::Value)?;
 
     match bin_op {
         ast::BinOp::And => {
@@ -110,15 +113,16 @@ fn compile_conditional_binop(
         }
     }
 
-    rhs.assemble(c, Needs::Value)?.push(c)?;
+    rhs.assemble(c, Needs::Value)?.pop(c)?;
 
     c.asm.label(end_label)?;
 
     if !needs.value() {
         c.asm.push(Inst::Pop, span);
+        return Ok(Value::empty(span));
     }
 
-    Ok(())
+    Ok(Value::unnamed(span, c))
 }
 
 fn compile_assign_binop(
@@ -127,13 +131,13 @@ fn compile_assign_binop(
     rhs: &ast::Expr,
     bin_op: ast::BinOp,
     needs: Needs,
-) -> CompileResult<()> {
+) -> CompileResult<Value> {
     let span = lhs.span().join(rhs.span());
 
     let supported = match lhs {
         // <var> <op> <expr>
         ast::Expr::Path(path) if path.rest.is_empty() => {
-            rhs.assemble(c, Needs::Value)?.push(c)?;
+            rhs.assemble(c, Needs::Value)?.pop(c)?;
 
             let segment = path
                 .first
@@ -146,8 +150,11 @@ fn compile_assign_binop(
         }
         // <expr>.<field> <op> <value>
         ast::Expr::FieldAccess(field_access) => {
-            field_access.expr.assemble(c, Needs::Value)?.push(c)?;
-            rhs.assemble(c, Needs::Value)?.push(c)?;
+            let expr = field_access.expr.assemble(c, Needs::Value)?;
+            let rhs = rhs.assemble(c, Needs::Value)?;
+
+            rhs.pop(c)?;
+            expr.pop(c)?;
 
             // field assignment
             match &field_access.expr_field {
@@ -203,9 +210,10 @@ fn compile_assign_binop(
 
     c.asm.push(Inst::Assign { target, op }, span);
 
-    if needs.value() {
-        c.asm.push(Inst::unit(), span);
+    if !needs.value() {
+        return Ok(Value::empty(span));
     }
 
-    Ok(())
+    c.asm.push(Inst::unit(), span);
+    Ok(Value::unnamed(span, c))
 }

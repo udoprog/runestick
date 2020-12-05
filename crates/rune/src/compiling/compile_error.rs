@@ -1,5 +1,5 @@
 use crate::ast;
-use crate::compiling::InsertMetaError;
+use crate::compiling::{InsertMetaError, VarId};
 use crate::{
     IrError, IrErrorKind, ParseError, ParseErrorKind, QueryError, QueryErrorKind, ResolveError,
     ResolveErrorKind, Spanned,
@@ -280,8 +280,8 @@ pub enum CompileErrorKind {
     NoSuchBuiltInMacro { name: Box<str> },
     #[error("variable moved")]
     VariableMoved { moved_at: Span },
-    #[error("value is empty")]
-    ValueEmpty,
+    #[error("variable by id `{id}` missing")]
+    VarIdMissing { id: VarId },
 }
 
 /// A single stap as an import entry.

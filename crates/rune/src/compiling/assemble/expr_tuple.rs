@@ -2,13 +2,12 @@ use crate::compiling::assemble::prelude::*;
 
 macro_rules! tuple {
     ($slf:expr, $variant:ident, $c:ident, $span:expr, $($var:ident),*) => {{
-        let guard = $c.scopes.push_child($span)?;
-
         let mut it = $slf.items.iter();
 
         $(
         let ($var, _) = it.next().ok_or_else(|| CompileError::new($span, CompileErrorKind::Custom { message: "items ended unexpectedly" }))?;
-        let $var = $var.assemble($c, Needs::Value)?.address($c)?;
+        let $var = $var.assemble($c, Needs::Value)?;
+        let $var = $var.consume_into_address($c)?;
         )*
 
         $c.asm.push(
@@ -17,8 +16,6 @@ macro_rules! tuple {
             },
             $span,
         );
-
-        $c.scopes.pop(guard, $span)?;
     }};
 }
 
@@ -37,9 +34,14 @@ impl Assemble for ast::ExprTuple {
                 3 => tuple!(self, Tuple3, c, span, e1, e2, e3),
                 4 => tuple!(self, Tuple4, c, span, e1, e2, e3, e4),
                 _ => {
+                    let mut items = Vec::new();
+
                     for (expr, _) in &self.items {
-                        expr.assemble(c, Needs::Value)?.push(c)?;
-                        c.scopes.decl_anon(expr.span())?;
+                        items.push(expr.assemble(c, Needs::Value)?);
+                    }
+
+                    for item in items.into_iter().rev() {
+                        item.pop(c)?;
                     }
 
                     c.asm.push(
@@ -48,8 +50,6 @@ impl Assemble for ast::ExprTuple {
                         },
                         span,
                     );
-
-                    c.scopes.undecl_anon(span, self.items.len())?;
                 }
             }
         }
@@ -57,8 +57,9 @@ impl Assemble for ast::ExprTuple {
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

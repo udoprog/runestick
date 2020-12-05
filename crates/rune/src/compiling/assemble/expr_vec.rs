@@ -8,21 +8,26 @@ impl Assemble for ast::ExprVec {
 
         let count = self.items.len();
 
+        let mut values = Vec::new();
+
         for (expr, _) in &self.items {
-            expr.assemble(c, Needs::Value)?.push(c)?;
-            c.scopes.decl_anon(expr.span())?;
+            values.push(expr.assemble(c, Needs::Value)?);
+        }
+
+        for value in values {
+            value.pop(c)?;
         }
 
         c.asm.push(Inst::Vec { count }, span);
-        c.scopes.undecl_anon(span, self.items.len())?;
 
         // Evaluate the expressions one by one, then pop them to cause any
         // side effects (without creating an object).
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

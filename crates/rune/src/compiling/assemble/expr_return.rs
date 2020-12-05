@@ -8,24 +8,22 @@ impl Assemble for ast::ExprReturn {
 
         // NB: drop any loop temporaries.
         for l in c.loops.iter() {
-            if let Some(offset) = l.drop {
+            if let Some(drop) = l.drop {
+                let offset = drop.offset(c)?;
                 c.asm.push(Inst::Drop { offset }, span);
             }
         }
 
-        // NB: we actually want total_var_count here since we need to clean up
-        // _every_ variable declared until we reached the current return.
-        let total_var_count = c.scopes.total_var_count(span)?;
-
         if let Some(expr) = &self.expr {
-            expr.assemble(c, Needs::Value)?.push(c)?;
-            c.locals_clean(total_var_count, span);
+            let value = expr.assemble(c, Needs::Value)?;
+            c.custom_clean(span, Needs::Value, c.scopes.totals())?;
+            value.pop(c)?;
             c.asm.push(Inst::Return, span);
         } else {
-            c.locals_pop(total_var_count, span);
+            c.custom_clean(span, Needs::None, c.scopes.totals())?;
             c.asm.push(Inst::ReturnUnit, span);
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unreachable(span))
     }
 }

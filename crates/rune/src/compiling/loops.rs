@@ -1,5 +1,5 @@
 use crate::ast;
-use crate::compiling::Needs;
+use crate::compiling::{Needs, Value};
 use crate::{CompileError, CompileErrorKind, CompileResult, Spanned as _, Storage};
 use runestick::{Label, Source};
 use std::cell::RefCell;
@@ -32,7 +32,7 @@ pub(crate) struct Loop {
     /// If the loop needs a value.
     pub(crate) needs: Needs,
     /// Locals to drop when breaking.
-    pub(crate) drop: Option<usize>,
+    pub(crate) drop: Option<Value>,
 }
 
 pub(crate) struct Loops {
@@ -67,7 +67,7 @@ impl Loops {
         storage: &Storage,
         source: &Source,
         expected: ast::Label,
-    ) -> CompileResult<(Loop, Vec<usize>)> {
+    ) -> CompileResult<(Loop, Vec<Value>)> {
         use crate::parsing::Resolve as _;
 
         let span = expected.span();

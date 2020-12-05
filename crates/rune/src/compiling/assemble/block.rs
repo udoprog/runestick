@@ -10,14 +10,18 @@ impl AssembleClosure for ast::Block {
         let span = self.span();
         log::trace!("ExprBlock (procedure) => {:?}", c.source.source(span));
 
-        let guard = c.scopes.push_child(span)?;
+        let guard = c.scopes.push();
 
         for capture in captures {
-            c.scopes.new_var(&capture.ident, span)?;
+            c.scopes.named(&capture.ident, span)?;
         }
 
-        self.assemble(c, Needs::Value)?.push(c)?;
-        c.clean_last_scope(span, guard, Needs::Value)?;
+        self.assemble(c, Needs::Value)?.pop(c)?;
+        c.locals_clean(span, Needs::Value)?;
+
+        let scope = guard.transfer(span, c, 1)?;
+        debug_assert!(scope.is_empty());
+
         c.asm.push(Inst::Return, span);
         Ok(())
     }
@@ -30,7 +34,7 @@ impl Assemble for ast::Block {
         log::trace!("Block => {:?}", c.source.source(span));
 
         c.contexts.push(span);
-        let scopes_count = c.scopes.push_child(span)?;
+        let guard = c.scopes.push();
 
         let mut last = None::<(&ast::Expr, bool)>;
 
@@ -39,10 +43,10 @@ impl Assemble for ast::Block {
                 ast::Stmt::Local(local) => {
                     if let Some((stmt, _)) = std::mem::take(&mut last) {
                         // NB: terminated expressions do not need to produce a value.
-                        stmt.assemble(c, Needs::None)?.push(c)?;
+                        stmt.assemble(c, Needs::None)?.ignore(c)?;
                     }
 
-                    local.assemble(c, Needs::None)?.push(c)?;
+                    local.assemble(c, Needs::None)?.ignore(c)?;
                     continue;
                 }
                 ast::Stmt::Expr(expr, semi) => (expr, semi.is_some()),
@@ -51,39 +55,45 @@ impl Assemble for ast::Block {
 
             if let Some((stmt, _)) = std::mem::replace(&mut last, Some((expr, term))) {
                 // NB: terminated expressions do not need to produce a value.
-                stmt.assemble(c, Needs::None)?.push(c)?;
+                stmt.assemble(c, Needs::None)?.ignore(c)?;
             }
         }
 
-        let produced = if let Some((expr, term)) = last {
+        let value = if let Some((expr, term)) = last {
             if term {
-                expr.assemble(c, Needs::None)?.push(c)?;
-                false
+                expr.assemble(c, Needs::None)?
             } else {
-                expr.assemble(c, needs)?.push(c)?;
-                true
+                expr.assemble(c, needs)?
             }
         } else {
-            false
+            Value::empty(span)
         };
 
-        let scope = c.scopes.pop(scopes_count, span)?;
-
-        if needs.value() {
-            if produced {
-                c.locals_clean(scope.local_var_count, span);
+        let value = if needs.value() {
+            if value.is_present() {
+                c.locals_clean(span, needs)?;
+                value
             } else {
-                c.locals_pop(scope.local_var_count, span);
+                c.locals_clean(span, Needs::None)?;
                 c.asm.push(Inst::unit(), span);
+                Value::unnamed(span, c)
             }
         } else {
-            c.locals_pop(scope.local_var_count, span);
-        }
+            c.locals_clean(span, Needs::None)?;
+            value
+        };
+
+        let scope = guard.transfer(span, c, needs.transfer())?;
+        debug_assert!(
+            scope.is_empty(),
+            "scope should be empty, but was: {:?}",
+            scope
+        );
 
         c.contexts
             .pop()
             .ok_or_else(|| CompileError::msg(&span, "missing parent context"))?;
 
-        Ok(Value::top(span))
+        Ok(value)
     }
 }

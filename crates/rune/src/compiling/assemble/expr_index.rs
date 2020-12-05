@@ -15,8 +15,9 @@ impl Assemble for ast::ExprIndex {
         // effects, but pop the result in case a value is not needed.
         if !needs.value() {
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }

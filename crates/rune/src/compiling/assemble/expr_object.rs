@@ -28,16 +28,23 @@ impl Assemble for ast::ExprObject {
             }
         }
 
+        let mut assignments = Vec::with_capacity(self.assignments.len());
+
         for (assign, _) in &self.assignments {
             let span = assign.span();
 
             if let Some((_, expr)) = &assign.assign {
-                expr.assemble(c, Needs::Value)?.push(c)?;
+                assignments.push(expr.assemble(c, Needs::Value)?);
             } else {
                 let key = assign.key.resolve(&c.storage, &*c.source)?;
                 let var = c.scopes.get_var(&*key, c.source_id, c.visitor, span)?;
                 var.copy(&mut c.asm, span, format!("name `{}`", key));
+                assignments.push(Value::unnamed(span, c));
             }
+        }
+
+        for assign in assignments.into_iter().rev() {
+            assign.pop(c)?;
         }
 
         let slot = c.unit.new_static_object_keys(span, &keys)?;
@@ -83,9 +90,10 @@ impl Assemble for ast::ExprObject {
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
             c.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(Value::top(span))
+        Ok(Value::unnamed(span, c))
     }
 }
 

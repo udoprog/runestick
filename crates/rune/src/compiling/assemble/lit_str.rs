@@ -9,12 +9,13 @@ impl Assemble for ast::LitStr {
         // NB: Elide the entire literal if it's not needed.
         if !needs.value() {
             c.warnings.not_used(c.source_id, span, c.context());
-            return Ok(Value::top(span));
+            return Ok(Value::empty(span));
         }
 
         let string = self.resolve(&c.storage, &*c.source)?;
         let slot = c.unit.new_static_string(span, &*string)?;
         c.asm.push(Inst::String { slot }, span);
-        Ok(Value::top(span))
+
+        Ok(Value::unnamed(span, c))
     }
 }

@@ -1,8 +1,7 @@
 use crate::ast;
 use crate::collections::HashMap;
 use crate::compiling::{
-    Assemble as _, AssembleConst as _, Assembly, CompileVisitor, Loops, Scope, ScopeGuard, Scopes,
-    Value,
+    Assemble as _, AssembleConst as _, Assembly, CompileVisitor, Loops, Scope, Scopes, Value,
 };
 use crate::ir::{IrBudget, IrCompiler, IrInterpreter};
 use crate::query::{Named, Query, QueryConstFn, Used};
@@ -12,8 +11,8 @@ use crate::{
     CompileError, CompileErrorKind, Options, Resolve as _, Spanned, Storage, UnitBuilder, Warnings,
 };
 use runestick::{
-    CompileItem, CompileMeta, CompileMetaKind, ConstValue, Context, Inst, InstAddress, InstValue,
-    Item, Label, Source, Span, TypeCheck,
+    CompileItem, CompileMeta, CompileMetaKind, ConstValue, Context, Inst, InstValue, Item, Label,
+    Source, Span, TypeCheck,
 };
 use std::sync::Arc;
 
@@ -31,6 +30,15 @@ impl Needs {
     /// Test if any sort of value is needed.
     pub(crate) fn value(self) -> bool {
         matches!(self, Self::Type | Self::Value)
+    }
+
+    /// How many values that needs to be transfered to satisfy this need.
+    pub(crate) fn transfer(self) -> usize {
+        if self.value() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -101,31 +109,56 @@ impl<'a> Compiler<'a> {
         ))
     }
 
-    /// Pop locals by simply popping them.
-    pub(crate) fn locals_pop(&mut self, total_var_count: usize, span: Span) {
-        match total_var_count {
-            0 => (),
-            1 => {
-                self.asm.push(Inst::Pop, span);
-            }
-            count => {
-                self.asm.push(Inst::PopN { count }, span);
-            }
-        }
+    /// Clean up local according to needs.
+    ///
+    /// This assumes all values are registered in the scope.
+    pub(crate) fn locals_clean(&mut self, span: Span, needs: Needs) -> CompileResult<()> {
+        self.custom_clean(span, needs, self.scopes.locals())
     }
 
-    /// Clean up local variables by preserving the value that is on top and
-    /// popping the rest.
-    ///
-    /// The clean operation will preserve the value that is on top of the stack,
-    /// and pop the values under it.
-    pub(crate) fn locals_clean(&mut self, total_var_count: usize, span: Span) {
-        match total_var_count {
-            0 => (),
-            count => {
-                self.asm.push(Inst::Clean { count }, span);
+    /// Perform a custom clean.
+    pub(crate) fn custom_clean(
+        &mut self,
+        span: Span,
+        needs: Needs,
+        count: usize,
+    ) -> CompileResult<()> {
+        if needs.value() {
+            // NB: top of the stack needs to be preserved.
+            let count = count.checked_sub(1).ok_or_else(|| {
+                CompileError::new(
+                    span,
+                    CompileErrorKind::Custom {
+                        message: "ran out of locals to clean",
+                    },
+                )
+            })?;
+
+            match count {
+                0 => (),
+                count => {
+                    self.asm.push(Inst::Clean { count }, span);
+                }
             }
+
+            let top = self.scopes.stack_pop(span)?;
+            self.scopes.pop(span, count)?;
+            self.scopes.stack_push(top);
+        } else {
+            match count {
+                0 => (),
+                1 => {
+                    self.asm.push(Inst::Pop, span);
+                }
+                count => {
+                    self.asm.push(Inst::PopN { count }, span);
+                }
+            }
+
+            self.scopes.pop(span, count)?;
         }
+
+        Ok(())
     }
 
     /// Compile an item.
@@ -134,7 +167,7 @@ impl<'a> Compiler<'a> {
         meta: &CompileMeta,
         span: Span,
         needs: Needs,
-    ) -> CompileResult<()> {
+    ) -> CompileResult<Value> {
         log::trace!("CompileMeta => {:?} {:?}", meta, needs);
 
         if let Needs::Value = needs {
@@ -226,9 +259,10 @@ impl<'a> Compiler<'a> {
 
         if !needs.value() {
             self.asm.push(Inst::Pop, span);
+            return Ok(Value::empty(span));
         }
 
-        Ok(())
+        Ok(Value::unnamed(span, self))
     }
 
     /// Convert a path to an item.
@@ -252,18 +286,18 @@ impl<'a> Compiler<'a> {
             ast::Condition::Expr(expr) => {
                 let span = expr.span();
 
-                expr.assemble(self, Needs::Value)?.push(self)?;
+                expr.assemble(self, Needs::Value)?.pop(self)?;
                 self.asm.jump_if(then_label, span);
 
-                Ok(self.scopes.child(span)?)
+                Ok(self.scopes.scope())
             }
             ast::Condition::ExprLet(expr_let) => {
                 let span = expr_let.span();
 
                 let false_label = self.asm.new_label("if_condition_false");
 
-                let scope = self.scopes.child(span)?;
-                let expected = self.scopes.push(scope);
+                let scope = self.scopes.scope();
+                let guard = self.scopes.push_scope(span, scope)?;
 
                 let load = |c: &mut Self, needs: Needs| Ok(expr_let.expr.assemble(c, needs)?);
 
@@ -274,8 +308,7 @@ impl<'a> Compiler<'a> {
                     self.asm.jump(then_label, span);
                 };
 
-                let scope = self.scopes.pop(expected, span)?;
-                Ok(scope)
+                guard.pop(span, self)
             }
         }
     }
@@ -292,15 +325,14 @@ impl<'a> Compiler<'a> {
 
         // Assign the yet-to-be-verified tuple to an anonymous slot, so we can
         // interact with it multiple times.
-        load(self, Needs::Value)?.push(self)?;
-        let offset = self.scopes.decl_anon(span)?;
+        let value = load(self, Needs::Value)?;
 
         // Copy the temporary and check that its length matches the pattern and
         // that it is indeed a vector.
-        self.asm.push(Inst::Copy { offset }, span);
 
         let (is_open, count) = pat_items_count(&pat_vec.items)?;
 
+        value.pop(self)?;
         self.asm.push(
             Inst::MatchSequence {
                 type_check: TypeCheck::Vec,
@@ -311,23 +343,22 @@ impl<'a> Compiler<'a> {
         );
 
         self.asm
-            .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+            .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
 
         for (index, (pat, _)) in pat_vec.items.iter().take(count).enumerate() {
             let span = pat.span();
 
-            let load = move |c: &mut Self, needs: Needs| {
-                if needs.value() {
-                    c.asm.push(
-                        Inst::TupleIndexGet {
-                            target: InstAddress::Offset(offset),
-                            index,
-                        },
-                        span,
-                    );
+            let load = |c: &mut Self, needs: Needs| {
+                if !needs.value() {
+                    return Ok(Value::empty(span));
                 }
 
-                Ok(Value::top(span))
+                let target = value.address(c)?;
+
+                c.asm.push(Inst::TupleIndexGet { target, index }, span);
+
+                let id = c.scopes.unnamed(span);
+                Ok(Value::var(span, id))
             };
 
             self.compile_pat(&*pat, false_label, &load)?;
@@ -346,19 +377,15 @@ impl<'a> Compiler<'a> {
         let span = pat_tuple.span();
         log::trace!("PatTuple => {:?}", self.source.source(span));
 
-        load(self, Needs::Value)?.push(self)?;
+        let value = load(self, Needs::Value)?;
 
         if pat_tuple.items.is_empty() {
+            value.pop(self)?;
             self.asm.push(Inst::IsUnit, span);
-
             self.asm
-                .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+                .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
             return Ok(());
         }
-
-        // Assign the yet-to-be-verified tuple to an anonymous slot, so we can
-        // interact with it multiple times.
-        let offset = self.scopes.decl_anon(span)?;
 
         let type_check = if let Some(path) = &pat_tuple.path {
             let named = self.convert_path_to_named(path)?;
@@ -417,7 +444,7 @@ impl<'a> Compiler<'a> {
 
         let (is_open, count) = pat_items_count(&pat_tuple.items)?;
 
-        self.asm.push(Inst::Copy { offset }, span);
+        value.copy(self)?;
         self.asm.push(
             Inst::MatchSequence {
                 type_check,
@@ -426,24 +453,23 @@ impl<'a> Compiler<'a> {
             },
             span,
         );
+
         self.asm
-            .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+            .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
 
         for (index, (pat, _)) in pat_tuple.items.iter().take(count).enumerate() {
             let span = pat.span();
 
             let load = move |c: &mut Self, needs: Needs| {
-                if needs.value() {
-                    c.asm.push(
-                        Inst::TupleIndexGet {
-                            target: InstAddress::Offset(offset),
-                            index,
-                        },
-                        span,
-                    );
+                if !needs.value() {
+                    return Ok(Value::empty(span));
                 }
 
-                Ok(Value::top(span))
+                let target = value.address(c)?;
+                c.asm.push(Inst::TupleIndexGet { target, index }, span);
+
+                let id = c.scopes.unnamed(span);
+                Ok(Value::var(span, id))
             };
 
             self.compile_pat(&*pat, false_label, &load)?;
@@ -573,8 +599,9 @@ impl<'a> Compiler<'a> {
             ast::ObjectIdent::Anonymous(..) => TypeCheck::Object,
         };
 
-        let target = load(self, Needs::Value)?.address(self)?;
+        let value = load(self, Needs::Value)?;
 
+        let target = value.address(self)?;
         self.asm.push(
             Inst::MatchObject {
                 target,
@@ -586,7 +613,7 @@ impl<'a> Compiler<'a> {
         );
 
         self.asm
-            .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+            .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
 
         for (binding, slot) in bindings.iter().zip(string_slots) {
             let span = binding.span();
@@ -594,20 +621,22 @@ impl<'a> Compiler<'a> {
             match binding {
                 Binding::Binding(_, _, pat) => {
                     let binding_load = |c: &mut Self, needs: Needs| {
-                        if needs.value() {
-                            let target = load(c, needs)?.address(c)?;
-                            c.asm.push(Inst::ObjectIndexGet { target, slot }, span);
+                        if !needs.value() {
+                            return Ok(Value::empty(span));
                         }
 
-                        Ok(Value::top(span))
+                        let target = value.address(c)?;
+                        c.asm.push(Inst::ObjectIndexGet { target, slot }, span);
+                        let id = c.scopes.unnamed(span);
+                        return Ok(Value::var(span, id));
                     };
 
                     self.compile_pat(&*pat, false_label, &binding_load)?;
                 }
                 Binding::Ident(_, key) => {
-                    let target = load(self, Needs::Value)?.address(self)?;
+                    let target = value.address(self)?;
                     self.asm.push(Inst::ObjectIndexGet { target, slot }, span);
-                    self.scopes.decl_var(key, span)?;
+                    self.scopes.set(key, span)?;
                 }
             }
         }
@@ -663,7 +692,7 @@ impl<'a> Compiler<'a> {
             None => type_check,
         };
 
-        load(self, Needs::Value)?.push(self)?;
+        load(self, Needs::Value)?.pop(self)?;
         self.asm.push(
             Inst::MatchSequence {
                 type_check,
@@ -673,24 +702,20 @@ impl<'a> Compiler<'a> {
             span,
         );
         self.asm
-            .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+            .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
         Ok(true)
     }
 
     /// Compile a pattern based on the given offset.
-    pub(crate) fn compile_pat_offset(
-        &mut self,
-        pat: &ast::Pat,
-        offset: usize,
-    ) -> CompileResult<()> {
+    pub(crate) fn compile_pat_offset(&mut self, pat: &ast::Pat, value: Value) -> CompileResult<()> {
         let span = pat.span();
 
         let load = |_: &mut Compiler, needs: Needs| {
             if needs.value() {
-                return Ok(Value::offset(span, offset));
+                return Ok(value);
             }
 
-            Ok(Value::top(span))
+            Ok(Value::empty(span))
         };
 
         let false_label = self.asm.new_label("let_panic");
@@ -743,7 +768,7 @@ impl<'a> Compiler<'a> {
                 }
 
                 if let Some(ident) = named.as_local() {
-                    load(self, Needs::Value)?.decl_var(self, ident)?;
+                    load(self, Needs::Value)?.decl(self, ident)?;
                     return Ok(false);
                 }
 
@@ -797,7 +822,7 @@ impl<'a> Compiler<'a> {
                             let integer = lit_number
                                 .resolve(&self.storage, &*self.source)?
                                 .as_i64(pat_lit.span(), true)?;
-                            load(self, Needs::Value)?.push(self)?;
+                            load(self, Needs::Value)?.pop(self)?;
                             self.asm.push(Inst::EqInteger { integer }, span);
                             break;
                         }
@@ -806,13 +831,13 @@ impl<'a> Compiler<'a> {
                 ast::Expr::Lit(expr_lit) => match &expr_lit.lit {
                     ast::Lit::Byte(lit_byte) => {
                         let byte = lit_byte.resolve(&self.storage, &*self.source)?;
-                        load(self, Needs::Value)?.push(self)?;
+                        load(self, Needs::Value)?.pop(self)?;
                         self.asm.push(Inst::EqByte { byte }, lit_byte.span());
                         break;
                     }
                     ast::Lit::Char(lit_char) => {
                         let character = lit_char.resolve(&self.storage, &*self.source)?;
-                        load(self, Needs::Value)?.push(self)?;
+                        load(self, Needs::Value)?.pop(self)?;
                         self.asm
                             .push(Inst::EqCharacter { character }, lit_char.span());
                         break;
@@ -821,7 +846,7 @@ impl<'a> Compiler<'a> {
                         let span = pat_string.span();
                         let string = pat_string.resolve(&self.storage, &*self.source)?;
                         let slot = self.unit.new_static_string(span, &*string)?;
-                        load(self, Needs::Value)?.push(self)?;
+                        load(self, Needs::Value)?.pop(self)?;
                         self.asm.push(Inst::EqStaticString { slot }, span);
                         break;
                     }
@@ -830,14 +855,14 @@ impl<'a> Compiler<'a> {
                         let integer = lit_number
                             .resolve(&self.storage, &*self.source)?
                             .as_i64(pat_lit.span(), false)?;
-                        load(self, Needs::Value)?.push(self)?;
+                        load(self, Needs::Value)?.pop(self)?;
                         self.asm.push(Inst::EqInteger { integer }, span);
                         break;
                     }
                     ast::Lit::Bool(lit_bool) => {
                         let span = lit_bool.span();
                         let boolean = lit_bool.value;
-                        load(self, Needs::Value)?.push(self)?;
+                        load(self, Needs::Value)?.pop(self)?;
                         self.asm.push(Inst::EqBool { boolean }, span);
                         break;
                     }
@@ -854,26 +879,8 @@ impl<'a> Compiler<'a> {
 
         let span = pat_lit.span();
         self.asm
-            .pop_and_jump_if_not(self.scopes.local_var_count(span)?, false_label, span);
+            .pop_and_jump_if_not(self.scopes.locals(), false_label, span);
         Ok(true)
-    }
-
-    /// Clean the last scope.
-    pub(crate) fn clean_last_scope(
-        &mut self,
-        span: Span,
-        expected: ScopeGuard,
-        needs: Needs,
-    ) -> CompileResult<()> {
-        let scope = self.scopes.pop(expected, span)?;
-
-        if needs.value() {
-            self.locals_clean(scope.local_var_count, span);
-        } else {
-            self.locals_pop(scope.local_var_count, span);
-        }
-
-        Ok(())
     }
 
     /// Get the latest relevant warning context.

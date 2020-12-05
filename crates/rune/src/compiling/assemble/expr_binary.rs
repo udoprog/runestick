@@ -113,7 +113,7 @@ fn compile_conditional_binop(
         }
     }
 
-    rhs.assemble(c, Needs::Value)?.pop(c)?;
+    rhs.assemble(c, Needs::Value)?;
 
     c.asm.label(end_label)?;
 

@@ -141,7 +141,7 @@ impl<'a> Compiler<'a> {
                 }
             }
 
-            let top = self.scopes.stack_pop(span)?;
+            let (top, _) = self.scopes.stack_pop(span)?;
             self.scopes.pop(span, count)?;
             self.scopes.stack_push(top);
         } else {
@@ -356,9 +356,7 @@ impl<'a> Compiler<'a> {
                 let target = value.address(c)?;
 
                 c.asm.push(Inst::TupleIndexGet { target, index }, span);
-
-                let id = c.scopes.unnamed(span);
-                Ok(Value::var(span, id))
+                Ok(Value::unnamed(span, c))
             };
 
             self.compile_pat(&*pat, false_label, &load)?;
@@ -467,9 +465,7 @@ impl<'a> Compiler<'a> {
 
                 let target = value.address(c)?;
                 c.asm.push(Inst::TupleIndexGet { target, index }, span);
-
-                let id = c.scopes.unnamed(span);
-                Ok(Value::var(span, id))
+                Ok(Value::unnamed(span, c))
             };
 
             self.compile_pat(&*pat, false_label, &load)?;
@@ -627,8 +623,7 @@ impl<'a> Compiler<'a> {
 
                         let target = value.address(c)?;
                         c.asm.push(Inst::ObjectIndexGet { target, slot }, span);
-                        let id = c.scopes.unnamed(span);
-                        return Ok(Value::var(span, id));
+                        return Ok(Value::unnamed(span, c));
                     };
 
                     self.compile_pat(&*pat, false_label, &binding_load)?;

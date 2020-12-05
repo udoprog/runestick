@@ -36,7 +36,8 @@ impl Assemble for ast::ExprIf {
         let guard = c.scopes.push_scope(span, then_scope)?;
         self.block.assemble(c, needs)?;
         c.locals_clean(span, needs)?;
-        guard.pop(span, c)?;
+        let scope = guard.pop(span, c)?;
+        debug_assert!(scope.len() == needs.transfer());
 
         if !self.expr_else_ifs.is_empty() {
             c.asm.jump(end_label, span);
@@ -54,7 +55,8 @@ impl Assemble for ast::ExprIf {
             let guard = c.scopes.push_scope(span, scope)?;
             branch.block.assemble(c, needs)?;
             c.locals_clean(span, needs)?;
-            guard.pop(span, c)?;
+            let scope = guard.pop(span, c)?;
+            debug_assert!(scope.len() == needs.transfer());
 
             if it.peek().is_some() {
                 c.asm.jump(end_label, span);

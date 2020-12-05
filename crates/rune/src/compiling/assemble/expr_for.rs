@@ -15,17 +15,16 @@ impl Assemble for ast::ExprFor {
         let iter_var = {
             self.iter.assemble(c, Needs::Value)?.pop(c)?;
 
-            let iter_var = c.scopes.unnamed(span);
             c.asm.push_with_comment(
                 Inst::CallInstance {
                     hash: *runestick::Protocol::INTO_ITER,
                     args: 0,
                 },
                 span,
-                format!("into_iter (offset: {})", iter_var),
+                format!("into_iter"),
             );
 
-            Value::var(span, iter_var)
+            Value::unnamed(span, c)
         };
 
         let binding_span = self.binding.span();

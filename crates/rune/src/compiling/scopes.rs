@@ -5,8 +5,14 @@ use runestick::{Inst, SourceId, Span};
 use std::fmt;
 
 /// The identifier of a variable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VarId(usize);
+
+impl fmt::Debug for VarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// A calculated variable offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,22 +31,23 @@ impl fmt::Display for VarId {
 
 /// A locally declared variable, its calculated stack offset and where it was
 /// declared in its source file.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Var {
     /// Slot offset from the current stack frame.
     pub(crate) offset: usize,
     /// Token assocaited with the variable.
-    span: Span,
+    pub(crate) span: Span,
     /// Variable has been taken at the given position.
     moved_at: Option<Span>,
 }
 
-impl Var {
-    /// Get the span of the variable.
-    pub fn span(&self) -> Span {
-        self.span
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}, {:?})", self.offset, self.span)
     }
+}
 
+impl Var {
     /// Copy the declared variable.
     pub(crate) fn copy<C>(&self, asm: &mut Assembly, span: Span, comment: C)
     where
@@ -78,7 +85,7 @@ pub(crate) struct Scope {
     head: usize,
     /// Vars that were popped as part of this scope. These are only populated
     /// once the scope is popped.
-    vars: Vec<Var>,
+    stack: Vec<Var>,
 }
 
 impl Scope {
@@ -87,20 +94,26 @@ impl Scope {
         Self {
             locals: HashMap::new(),
             head: 0,
-            vars: vec![],
+            stack: vec![],
         }
+    }
+
+    /// Test the length of the scope.
+    pub(crate) fn len(&self) -> usize {
+        self.stack.len()
     }
 
     /// Test if the scope is empty.
     pub(crate) fn is_empty(&self) -> bool {
-        self.vars.is_empty()
+        self.stack.is_empty()
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Scopes {
     /// Scopes with named locals.
     scopes: Vec<Scope>,
-    /// Declared variables.
+    /// Stack variables.
     stack: Vec<Var>,
 }
 
@@ -118,7 +131,7 @@ impl Scopes {
         Scope {
             locals: HashMap::new(),
             head: self.stack.len(),
-            vars: Vec::new(),
+            stack: Vec::new(),
         }
     }
 
@@ -331,21 +344,27 @@ impl Scopes {
     }
 
     /// Pop the stack.
-    pub(crate) fn stack_pop(&mut self, span: Span) -> CompileResult<Var> {
+    pub(crate) fn stack_pop(&mut self, span: Span) -> CompileResult<(Var, VarId)> {
         let head = self.last(span)?.head;
 
         if self.stack.len() == head {
             return Err(CompileError::msg(span, "stack pop is out of bounds"));
         }
 
-        self.stack
+        let var = self
+            .stack
             .pop()
-            .ok_or_else(|| CompileError::msg(span, "stack pop is out of bounds"))
+            .ok_or_else(|| CompileError::msg(span, "stack pop is out of bounds"))?;
+
+        let id = VarId(self.stack.len());
+        Ok((var, id))
     }
 
     /// Push a custom variable onto the stack.
-    pub(crate) fn stack_push(&mut self, var: Var) {
+    pub(crate) fn stack_push(&mut self, var: Var) -> VarId {
+        let id = VarId(self.stack.len());
         self.stack.push(var);
+        id
     }
 
     /// Declare a new unnamed variable.
@@ -382,7 +401,7 @@ impl Scopes {
                 span,
                 CompileErrorKind::VariableConflict {
                     name: name.to_owned(),
-                    existing_span: old.span(),
+                    existing_span: old.span,
                 },
             ));
         }
@@ -408,7 +427,7 @@ impl Scopes {
                 span,
                 CompileErrorKind::VariableConflict {
                     name: name.to_owned(),
-                    existing_span: old.span(),
+                    existing_span: old.span,
                 },
             ));
         }
@@ -453,7 +472,7 @@ impl Scopes {
             ));
         }
 
-        self.stack.extend(scope.vars.drain(..));
+        self.stack.extend(scope.stack.drain(..));
         self.scopes.push(scope);
 
         log::trace!(">> scope guard: {}", self.scopes.len());
@@ -566,7 +585,7 @@ impl ScopeGuard {
             .pop()
             .ok_or_else(|| CompileError::msg(span, "no scopes to pop"))?;
 
-        scope.vars = c.scopes.stack.drain(scope.head..).collect();
+        scope.stack = c.scopes.stack.drain(scope.head..).collect();
         Ok(scope)
     }
 
@@ -579,14 +598,14 @@ impl ScopeGuard {
     ) -> CompileResult<Scope> {
         let mut scope = self.pop(span, c)?;
 
-        if scope.vars.len() < transfer {
+        if scope.stack.len() < transfer {
             return Err(CompileError::msg(
                 span,
                 "not enough variables in popped scope to transfer",
             ));
         }
 
-        c.scopes.stack.extend(scope.vars.drain(..transfer));
+        c.scopes.stack.extend(scope.stack.drain(..transfer));
         Ok(scope)
     }
 }

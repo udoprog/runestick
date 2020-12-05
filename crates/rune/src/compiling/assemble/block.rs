@@ -55,7 +55,7 @@ impl Assemble for ast::Block {
 
             if let Some((stmt, _)) = std::mem::replace(&mut last, Some((expr, term))) {
                 // NB: terminated expressions do not need to produce a value.
-                stmt.assemble(c, Needs::None)?.ignore(c)?;
+                stmt.assemble(c, Needs::None)?;
             }
         }
 
@@ -69,19 +69,14 @@ impl Assemble for ast::Block {
             Value::empty(span)
         };
 
-        let value = if needs.value() {
-            if value.is_present() {
-                c.locals_clean(span, needs)?;
-                value
-            } else {
-                c.locals_clean(span, Needs::None)?;
-                c.asm.push(Inst::unit(), span);
-                Value::unnamed(span, c)
-            }
+        let value = if !value.is_present() && needs.value() {
+            c.asm.push(Inst::unit(), span);
+            Value::unnamed(span, c)
         } else {
-            c.locals_clean(span, Needs::None)?;
             value
         };
+
+        c.locals_clean(span, needs)?;
 
         let scope = guard.transfer(span, c, needs.transfer())?;
         debug_assert!(

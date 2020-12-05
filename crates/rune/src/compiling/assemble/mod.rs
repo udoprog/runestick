@@ -50,11 +50,6 @@ pub(crate) struct Value {
 }
 
 impl Value {
-    /// Test if value is empty.
-    pub(crate) fn is_present(&self) -> bool {
-        matches!(&self.kind, ValueKind::Var(..))
-    }
-
     /// Construct a value that is not produced at all.
     pub(crate) fn empty(span: Span) -> Self {
         Self {
@@ -82,7 +77,16 @@ impl Value {
     /// Helper to construct a new unnamed value.
     pub(crate) fn unnamed(span: Span, c: &mut Compiler<'_>) -> Self {
         let id = c.scopes.unnamed(span);
-        Self::var(span, id)
+
+        Self {
+            span,
+            kind: ValueKind::Var(id),
+        }
+    }
+
+    /// Test if value is empty.
+    pub(crate) fn is_present(&self) -> bool {
+        matches!(&self.kind, ValueKind::Var(..))
     }
 
     /// Get the offset of the value.
@@ -118,7 +122,8 @@ impl Value {
                 c.asm.push(Inst::Copy { offset }, self.span);
             }
             VarOffset::Top => {
-                c.scopes.stack_pop(self.span)?;
+                let (_, popped) = c.scopes.stack_pop(self.span)?;
+                debug_assert!(popped == id);
             }
         }
 

@@ -13,6 +13,7 @@ mod compile_error;
 mod compile_visitor;
 mod unit_builder;
 mod v1;
+mod v2;
 
 pub use self::compile_error::{CompileError, CompileErrorKind, CompileResult, ImportEntryStep};
 pub use self::compile_visitor::{CompileVisitor, NoopCompileVisitor};
@@ -171,6 +172,31 @@ impl CompileBuildEntry<'_> {
         }
     }
 
+    /// Construct an instance of the next version of the compiler.
+    fn compiler2<'a>(
+        &'a mut self,
+        location: Location,
+        source: &'a Arc<Source>,
+        span: Span,
+        sm: &'a mut rune_ssa::Program,
+    ) -> self::v2::Compiler<'a> {
+        self::v2::Compiler {
+            sm,
+            location,
+            contexts: vec![span],
+            source,
+            scope: self::v2::scope::Stack::new(location.source_id, self.visitor.clone()),
+            storage: self.storage,
+            context: self.context,
+            consts: self.consts,
+            query: self.query,
+            unit: self.unit.clone(),
+            options: self.options,
+            diagnostics: self.diagnostics,
+            visitor: self.visitor.clone(),
+        }
+    }
+
     fn compile(mut self, entry: BuildEntry) -> Result<(), CompileError> {
         let BuildEntry {
             item,
@@ -180,6 +206,7 @@ impl CompileBuildEntry<'_> {
             used,
         } = entry;
 
+        let mut program = rune_ssa::Program::new();
         let mut asm = self.unit.new_assembly(location);
 
         match build {
@@ -193,6 +220,20 @@ impl CompileBuildEntry<'_> {
 
                 let mut c = self.compiler1(location, &source, span, &mut asm);
                 f.ast.assemble_fn(&mut c, false)?;
+
+                // NB: experimental compiler that is work-in-progress
+                if false {
+                    let mut c2 = self.compiler2(location, &source, span, &mut program);
+
+                    match self::v2::AssembleFn::assemble_fn(f.ast.as_ref(), &mut c2, false) {
+                        Ok(..) => {
+                            log::trace!("compiler2 output: {}", program.dump());
+                        }
+                        Err(e) => {
+                            log::trace!("compiler2 error: {}", e);
+                        }
+                    }
+                }
 
                 if used.is_unused() {
                     self.diagnostics.not_used(location.source_id, span, None);

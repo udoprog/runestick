@@ -31,6 +31,7 @@ smallvec = "1.5.1"
 
 runestick = {version = "0.7.0", path = "../runestick"}
 rune-macros = {version = "0.7.0", path = "../rune-macros"}
+rune-ssa = {version = "0.7.0", path = "../rune-ssa"}
 
 [dev-dependencies]
 tokio = { version = "0.2.22", features = ["macros"] }

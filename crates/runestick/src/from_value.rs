@@ -1,4 +1,6 @@
-use crate::{Any, AnyObj, Mut, RawMut, RawRef, Ref, Shared, StaticString, Value, VmError};
+use crate::{
+    Any, AnyObj, Mut, RawMut, RawRef, Ref, Shared, StaticString, StringValue, Value, VmError,
+};
 use std::sync::Arc;
 
 /// Trait for converting from a value.
@@ -159,8 +161,8 @@ impl UnsafeFromValue for &mut Result<Value, Value> {
 impl FromValue for String {
     fn from_value(value: Value) -> Result<Self, VmError> {
         match value {
-            Value::String(string) => Ok(string.borrow_ref()?.clone()),
-            Value::StaticString(string) => Ok((**string).to_owned()),
+            Value::String(StringValue::Dynamic(string)) => Ok(string.borrow_ref()?.clone()),
+            Value::String(StringValue::Static(string)) => Ok((**string).to_owned()),
             actual => Err(VmError::expected::<String>(actual.type_info()?)),
         }
     }
@@ -169,7 +171,7 @@ impl FromValue for String {
 impl FromValue for Mut<String> {
     fn from_value(value: Value) -> Result<Self, VmError> {
         match value {
-            Value::String(string) => Ok(string.into_mut()?),
+            Value::String(StringValue::Dynamic(string)) => Ok(string.into_mut()?),
             actual => Err(VmError::expected::<String>(actual.type_info()?)),
         }
     }
@@ -178,7 +180,7 @@ impl FromValue for Mut<String> {
 impl FromValue for Ref<String> {
     fn from_value(value: Value) -> Result<Self, VmError> {
         match value {
-            Value::String(string) => Ok(string.into_ref()?),
+            Value::String(StringValue::Dynamic(string)) => Ok(string.into_ref()?),
             actual => Err(VmError::expected::<String>(actual.type_info()?)),
         }
     }
@@ -187,7 +189,7 @@ impl FromValue for Ref<String> {
 impl FromValue for Box<str> {
     fn from_value(value: Value) -> Result<Self, VmError> {
         let string = value.into_string()?;
-        let string = string.borrow_ref()?.clone();
+        let string = string.borrow_ref()?.to_owned();
         Ok(string.into_boxed_str())
     }
 }
@@ -207,14 +209,14 @@ impl UnsafeFromValue for &str {
 
     fn from_value(value: Value) -> Result<(Self::Output, Self::Guard), VmError> {
         Ok(match value {
-            Value::String(string) => {
+            Value::String(StringValue::Dynamic(string)) => {
                 let string = string.into_ref()?;
                 let (s, guard) = Ref::into_raw(string);
                 // Safety: we're holding onto the guard for the string here, so
                 // it is live.
                 (unsafe { (*s).as_str() }, StrGuard::RawRef(guard))
             }
-            Value::StaticString(string) => {
+            Value::String(StringValue::Static(string)) => {
                 (string.as_ref().as_str(), StrGuard::StaticString(string))
             }
             actual => return Err(VmError::expected::<String>(actual.type_info()?)),
@@ -232,7 +234,7 @@ impl UnsafeFromValue for &mut str {
 
     fn from_value(value: Value) -> Result<(Self::Output, Self::Guard), VmError> {
         Ok(match value {
-            Value::String(string) => {
+            Value::String(StringValue::Dynamic(string)) => {
                 let string = string.into_mut()?;
                 let (s, guard) = Mut::into_raw(string);
                 // Safety: we're holding onto the guard for the string here, so
@@ -256,12 +258,14 @@ impl UnsafeFromValue for &String {
 
     fn from_value(value: Value) -> Result<(Self::Output, Self::Guard), VmError> {
         Ok(match value {
-            Value::String(string) => {
+            Value::String(StringValue::Dynamic(string)) => {
                 let string = string.into_ref()?;
                 let (s, guard) = Ref::into_raw(string);
                 (s, StrGuard::RawRef(guard))
             }
-            Value::StaticString(string) => (&**string, StrGuard::StaticString(string)),
+            Value::String(StringValue::Static(string)) => {
+                (&**string, StrGuard::StaticString(string))
+            }
             actual => {
                 return Err(VmError::expected::<String>(actual.type_info()?));
             }
@@ -279,7 +283,7 @@ impl UnsafeFromValue for &mut String {
 
     fn from_value(value: Value) -> Result<(Self::Output, Self::Guard), VmError> {
         Ok(match value {
-            Value::String(string) => {
+            Value::String(StringValue::Dynamic(string)) => {
                 let string = string.into_mut()?;
                 let (s, guard) = Mut::into_raw(string);
                 (s, guard)

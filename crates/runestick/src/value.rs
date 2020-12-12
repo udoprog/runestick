@@ -1,14 +1,15 @@
 use crate::access::AccessKind;
 use crate::protocol_caller::{EnvProtocolCaller, ProtocolCaller};
 use crate::{
-    Any, AnyObj, Bytes, ConstValue, Format, Function, Future, Generator, GeneratorState, Hash,
-    Item, Iterator, Mut, Object, Protocol, Range, RawMut, RawRef, Ref, Shared, StaticString,
-    Stream, Tuple, TypeInfo, Variant, Vec, Vm, VmError, VmErrorKind,
+    AccessError, Any, AnyObj, BorrowRef, Bytes, ConstValue, Format, Function, Future, Generator,
+    GeneratorState, Hash, Item, Iterator, Mut, Object, Protocol, Range, RawMut, RawRef, Ref,
+    Shared, StaticString, Stream, Tuple, TypeInfo, Variant, Vec, Vm, VmError, VmErrorKind,
 };
 use serde::{de, ser, Deserialize, Serialize};
 use std::cmp;
 use std::fmt;
 use std::hash;
+use std::ops;
 use std::sync::Arc;
 use std::vec;
 
@@ -231,17 +232,8 @@ pub enum Value {
     Float(f64),
     /// A type hash. Describes a type in the virtual machine.
     Type(Hash),
-    /// A static string.
-    ///
-    /// While `Rc<str>` would've been enough to store an unsized `str`, either
-    /// `Box<str>` or `String` must be used to reduce the size of the type to
-    /// 8 bytes, to ensure that a stack value is 16 bytes in size.
-    ///
-    /// `Rc<str>` on the other hand wraps a so-called fat pointer, which is 16
-    /// bytes.
-    StaticString(Arc<StaticString>),
-    /// A UTF-8 string.
-    String(Shared<String>),
+    /// A string value.
+    String(StringValue),
     /// A byte string.
     Bytes(Shared<Bytes>),
     /// A vector containing any values.
@@ -322,9 +314,6 @@ impl Value {
             Value::Type(value) => {
                 write!(s, "Type({})", value)
             }
-            Value::StaticString(value) => {
-                write!(s, "{:?}", value)
-            }
             Value::String(value) => {
                 write!(s, "{:?}", value)
             }
@@ -383,13 +372,13 @@ impl Value {
                 write!(s, "{:?}", value)
             }
             value => {
-                let string = Value::from(std::mem::take(s));
+                let string = Shared::new(std::mem::take(s));
                 let value = caller.call_protocol_fn(
                     Protocol::STRING_DEBUG,
                     value.clone(),
                     (string.clone(),),
                 )?;
-                *s = string.into_string()?.take()?;
+                *s = string.take()?;
                 fmt::Result::from_value(value)?
             }
         };
@@ -425,16 +414,14 @@ impl Value {
         crate::env::with(|context, unit| {
             if let Some(name) = context.constant(hash) {
                 match name {
-                    ConstValue::String(s) => return Ok(s.clone()),
-                    ConstValue::StaticString(s) => return Ok((*s).to_string()),
+                    ConstValue::String(s) => return Ok((&**s).to_owned()),
                     _ => Err(VmError::expected::<String>(name.type_info()))?,
                 }
             }
 
             if let Some(name) = unit.constant(hash) {
                 match name {
-                    ConstValue::String(s) => return Ok(s.clone()),
-                    ConstValue::StaticString(s) => return Ok((*s).to_string()),
+                    ConstValue::String(s) => return Ok((&**s).to_owned()),
                     _ => Err(VmError::expected::<String>(name.type_info()))?,
                 }
             }
@@ -486,8 +473,12 @@ impl Value {
             Self::Integer(value) => Self::Integer(value),
             Self::Float(value) => Self::Float(value),
             Self::Type(value) => Self::Type(value),
-            Self::StaticString(value) => Self::StaticString(value),
-            Self::String(value) => Self::String(Shared::new(value.take()?)),
+            Self::String(value) => match value {
+                StringValue::Dynamic(s) => {
+                    Self::String(StringValue::Dynamic(Shared::new(s.take()?)))
+                }
+                StringValue::Static(s) => Self::String(StringValue::Static(s)),
+            },
             Self::Bytes(value) => Self::Bytes(Shared::new(value.take()?)),
             Self::Vec(value) => Self::Vec(Shared::new(value.take()?)),
             Self::Tuple(value) => Self::Tuple(Shared::new(value.take()?)),
@@ -631,7 +622,7 @@ impl Value {
 
     /// Try to coerce value into a string.
     #[inline]
-    pub fn into_string(self) -> Result<Shared<String>, VmError> {
+    pub fn into_string(self) -> Result<StringValue, VmError> {
         match self {
             Self::String(string) => Ok(string),
             actual => Err(VmError::expected::<String>(actual.type_info()?)),
@@ -776,7 +767,6 @@ impl Value {
             Self::Char(..) => crate::CHAR_TYPE.hash,
             Self::Integer(..) => crate::INTEGER_TYPE.hash,
             Self::Float(..) => crate::FLOAT_TYPE.hash,
-            Self::StaticString(..) => crate::STRING_TYPE.hash,
             Self::String(..) => crate::STRING_TYPE.hash,
             Self::Bytes(..) => crate::BYTES_TYPE.hash,
             Self::Vec(..) => crate::VEC_TYPE.hash,
@@ -810,7 +800,6 @@ impl Value {
             Self::Char(..) => TypeInfo::StaticType(crate::CHAR_TYPE),
             Self::Integer(..) => TypeInfo::StaticType(crate::INTEGER_TYPE),
             Self::Float(..) => TypeInfo::StaticType(crate::FLOAT_TYPE),
-            Self::StaticString(..) => TypeInfo::StaticType(crate::STRING_TYPE),
             Self::String(..) => TypeInfo::StaticType(crate::STRING_TYPE),
             Self::Bytes(..) => TypeInfo::StaticType(crate::BYTES_TYPE),
             Self::Vec(..) => TypeInfo::StaticType(crate::VEC_TYPE),
@@ -902,19 +891,7 @@ impl Value {
                 }
             }
             (Self::String(a), Self::String(b)) => {
-                return Ok(*a.borrow_ref()? == *b.borrow_ref()?);
-            }
-            (Self::StaticString(a), Self::String(b)) => {
-                let b = b.borrow_ref()?;
-                return Ok(***a == *b);
-            }
-            (Self::String(a), Self::StaticString(b)) => {
-                let a = a.borrow_ref()?;
-                return Ok(*a == ***b);
-            }
-            // fast string comparison: exact string slot.
-            (Self::StaticString(a), Self::StaticString(b)) => {
-                return Ok(***a == ***b);
+                return StringValue::value_ptr_eq(a, b);
             }
             (Self::Option(a), Self::Option(b)) => match (&*a.borrow_ref()?, &*b.borrow_ref()?) {
                 (Some(a), Some(b)) => return Self::value_ptr_eq(vm, a, b),
@@ -965,9 +942,6 @@ impl fmt::Debug for Value {
             }
             Value::Type(value) => {
                 write!(f, "Type({})", value)?;
-            }
-            Value::StaticString(value) => {
-                write!(f, "{:?}", value)?;
             }
             Value::String(value) => {
                 write!(f, "{:?}", value)?;
@@ -1089,6 +1063,54 @@ macro_rules! impl_from {
     };
 }
 
+impl From<Arc<StaticString>> for Value {
+    fn from(s: Arc<StaticString>) -> Value {
+        Value::String(StringValue::Static(s))
+    }
+}
+
+impl crate::ToValue for Arc<StaticString> {
+    fn to_value(self) -> Result<Value, VmError> {
+        Ok(Value::from(self))
+    }
+}
+
+impl From<StaticString> for Value {
+    fn from(s: StaticString) -> Value {
+        Value::String(StringValue::Static(Arc::new(s)))
+    }
+}
+
+impl crate::ToValue for StaticString {
+    fn to_value(self) -> Result<Value, VmError> {
+        Ok(Value::from(self))
+    }
+}
+
+impl From<Shared<String>> for Value {
+    fn from(s: Shared<String>) -> Value {
+        Value::String(StringValue::Dynamic(s))
+    }
+}
+
+impl crate::ToValue for Shared<String> {
+    fn to_value(self) -> Result<Value, VmError> {
+        Ok(Value::from(self))
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Value {
+        Value::String(StringValue::Dynamic(Shared::new(s)))
+    }
+}
+
+impl crate::ToValue for String {
+    fn to_value(self) -> Result<Value, VmError> {
+        Ok(Value::from(self))
+    }
+}
+
 macro_rules! impl_from_wrapper {
     ($($variant:ident => $wrapper:ident<$ty:ty>),* $(,)?) => {
         impl_from!($($variant => $wrapper<$ty>),*);
@@ -1120,11 +1142,9 @@ impl_from! {
 }
 
 impl_from_wrapper! {
-    StaticString => Arc<StaticString>,
     Format => Box<Format>,
     Iterator => Shared<Iterator>,
     Bytes => Shared<Bytes>,
-    String => Shared<String>,
     Vec => Shared<Vec>,
     Tuple => Shared<Tuple>,
     Object => Shared<Object>,
@@ -1167,11 +1187,13 @@ impl ser::Serialize for Value {
             Value::Byte(c) => serializer.serialize_u8(*c),
             Value::Integer(integer) => serializer.serialize_i64(*integer),
             Value::Float(float) => serializer.serialize_f64(*float),
-            Value::StaticString(string) => serializer.serialize_str(string.as_ref()),
-            Value::String(string) => {
-                let string = string.borrow_ref().map_err(ser::Error::custom)?;
-                serializer.serialize_str(&*string)
-            }
+            Value::String(string) => match string {
+                StringValue::Static(string) => serializer.serialize_str(string.as_ref()),
+                StringValue::Dynamic(string) => {
+                    let string = string.borrow_ref().map_err(ser::Error::custom)?;
+                    serializer.serialize_str(&*string)
+                }
+            },
             Value::Bytes(bytes) => {
                 let bytes = bytes.borrow_ref().map_err(ser::Error::custom)?;
                 serializer.serialize_bytes(&*bytes)
@@ -1245,7 +1267,9 @@ impl<'de> de::Visitor<'de> for VmVisitor {
     where
         E: de::Error,
     {
-        Ok(Value::String(Shared::new(value.to_owned())))
+        Ok(Value::String(StringValue::Dynamic(Shared::new(
+            value.to_owned(),
+        ))))
     }
 
     #[inline]
@@ -1253,7 +1277,7 @@ impl<'de> de::Visitor<'de> for VmVisitor {
     where
         E: de::Error,
     {
-        Ok(Value::String(Shared::new(value)))
+        Ok(Value::String(StringValue::Dynamic(Shared::new(value))))
     }
 
     #[inline]
@@ -1409,13 +1433,105 @@ impl<'de> de::Visitor<'de> for VmVisitor {
     }
 }
 
+/// A reference to a string value.
+pub enum StringValueRef<'a> {
+    /// A borrowed reference from a static value.
+    Static(&'a str),
+    /// A borrowed reference from a dynamic value.
+    Dynamic(BorrowRef<'a, String>),
+}
+
+impl ops::Deref for StringValueRef<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            StringValueRef::Dynamic(s) => s,
+            StringValueRef::Static(s) => s,
+        }
+    }
+}
+
+/// The string representation of a value.
+#[derive(Clone)]
+pub enum StringValue {
+    /// A static string.
+    ///
+    /// While `Rc<str>` would've been enough to store an unsized `str`, either
+    /// `Box<str>` or `String` must be used to reduce the size of the type to
+    /// 8 bytes, to ensure that a stack value is 16 bytes in size.
+    ///
+    /// `Rc<str>` on the other hand wraps a so-called fat pointer, which is 16
+    /// bytes.
+    Static(Arc<StaticString>),
+    /// A UTF-8 string.
+    Dynamic(Shared<String>),
+}
+
+impl StringValue {
+    /// Borrow the string value as a reference.
+    pub fn borrow_ref(&self) -> Result<StringValueRef<'_>, AccessError> {
+        Ok(match self {
+            StringValue::Static(string) => StringValueRef::Static(string.as_ref()),
+            StringValue::Dynamic(string) => StringValueRef::Dynamic(string.borrow_ref()?),
+        })
+    }
+
+    /// Test if string is writable.
+    pub fn is_writable(&self) -> bool {
+        match self {
+            StringValue::Dynamic(s) => s.is_writable(),
+            StringValue::Static(..) => false,
+        }
+    }
+
+    /// Test if string is readable.
+    pub fn is_readable(&self) -> bool {
+        match self {
+            StringValue::Dynamic(s) => s.is_readable(),
+            StringValue::Static(..) => true,
+        }
+    }
+
+    pub(crate) fn value_ptr_eq(a: &Self, b: &Self) -> Result<bool, VmError> {
+        let a_guard;
+        let b_guard;
+
+        let a = match a {
+            StringValue::Static(s) => s.as_str(),
+            StringValue::Dynamic(s) => {
+                a_guard = s.borrow_ref()?;
+                a_guard.as_str()
+            }
+        };
+
+        let b = match b {
+            StringValue::Static(s) => s.as_str(),
+            StringValue::Dynamic(s) => {
+                b_guard = s.borrow_ref()?;
+                b_guard.as_str()
+            }
+        };
+
+        Ok(a == b)
+    }
+}
+
+impl fmt::Debug for StringValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Static(s) => s.fmt(f),
+            Self::Dynamic(s) => s.fmt(f),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Value;
 
     #[test]
     fn test_size() {
-        // :( - make this 16 bytes again by reducing the size of the Rc.
         assert_eq! {
             std::mem::size_of::<Value>(),
             16,

@@ -1,6 +1,8 @@
 //! The `std::string` module.
 
-use crate::{Any, Bytes, ContextError, Iterator, Module, Protocol, Value, VmError, VmErrorKind};
+use crate::{
+    Any, Bytes, ContextError, Iterator, Module, Protocol, StringValue, Value, VmError, VmErrorKind,
+};
 
 /// Construct the `std::string` module.
 pub fn module() -> Result<Module, ContextError> {
@@ -75,11 +77,11 @@ fn char_at(s: &str, index: usize) -> Result<Option<char>, NotCharBoundary> {
 
 fn string_split(this: &str, value: Value) -> Result<Iterator, VmError> {
     let lines = match value {
-        Value::String(s) => this
+        Value::String(StringValue::Dynamic(s)) => this
             .split(s.borrow_ref()?.as_str())
             .map(String::from)
             .collect::<Vec<String>>(),
-        Value::StaticString(s) => this
+        Value::String(StringValue::Static(s)) => this
             .split(s.as_str())
             .map(String::from)
             .collect::<Vec<String>>(),

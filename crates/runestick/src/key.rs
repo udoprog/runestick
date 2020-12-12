@@ -1,6 +1,6 @@
 use crate::{
-    Bytes, FromValue, Object, Shared, StaticString, ToValue, Tuple, TypeInfo, Value, Variant,
-    VariantData, VariantRtti, Vec, VmError, VmErrorKind,
+    Bytes, FromValue, Object, Shared, StaticString, StringValue, ToValue, Tuple, TypeInfo, Value,
+    Variant, VariantData, VariantRtti, Vec, VmError, VmErrorKind,
 };
 use serde::{de, ser};
 use std::cmp;
@@ -45,11 +45,13 @@ impl Key {
             Value::Char(c) => Self::Char(*c),
             Value::Bool(b) => Self::Bool(*b),
             Value::Integer(n) => Self::Integer(*n),
-            Value::String(s) => {
-                let s = s.borrow_ref()?;
-                Self::String(StringKey::String((**s).into()))
-            }
-            Value::StaticString(s) => Self::String(StringKey::StaticString(s.clone())),
+            Value::String(s) => match s {
+                StringValue::Dynamic(s) => {
+                    let s = s.borrow_ref()?;
+                    Self::String(StringKey::String((**s).into()))
+                }
+                StringValue::Static(s) => Self::String(StringKey::StaticString(s.clone())),
+            },
             Value::Option(option) => Self::Option(match &*option.borrow_ref()? {
                 Some(some) => Some(Box::new(Self::from_value(some)?)),
                 None => None,
@@ -129,8 +131,10 @@ impl Key {
             Self::Bool(b) => Value::Bool(b),
             Self::Integer(n) => Value::Integer(n),
             Self::String(s) => match s {
-                StringKey::String(s) => Value::String(Shared::new(String::from(s))),
-                StringKey::StaticString(s) => Value::StaticString(s),
+                StringKey::String(s) => {
+                    Value::String(StringValue::Dynamic(Shared::new(String::from(s))))
+                }
+                StringKey::StaticString(s) => Value::String(StringValue::Static(s)),
             },
             Self::Bytes(b) => Value::Bytes(Shared::new(b)),
             Self::Option(option) => Value::Option(Shared::new(match option {

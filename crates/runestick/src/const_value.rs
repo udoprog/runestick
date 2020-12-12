@@ -1,10 +1,11 @@
 use crate::collections::HashMap;
 use crate::{
-    Bytes, FromValue, Object, Shared, StaticString, ToValue, Tuple, TypeInfo, Value, Vec, VmError,
-    VmErrorKind,
+    Bytes, FromValue, Object, Shared, StaticString, StringValue, ToValue, Tuple, TypeInfo, Value,
+    Vec, VmError, VmErrorKind,
 };
 use serde::{de, ser};
 use std::fmt;
+use std::ops;
 use std::sync::Arc;
 use std::vec;
 
@@ -23,10 +24,8 @@ pub enum ConstValue {
     Integer(i64),
     /// An float constant.
     Float(f64),
-    /// A string constant designated by its slot.
-    String(String),
-    /// A static string.
-    StaticString(Arc<StaticString>),
+    /// A string constant value.
+    String(StringConstValue),
     /// A byte string.
     Bytes(Bytes),
     /// A vector of values.
@@ -53,8 +52,10 @@ impl ConstValue {
             Self::Bool(b) => Value::Bool(b),
             Self::Integer(n) => Value::Integer(n),
             Self::Float(n) => Value::Float(n),
-            Self::String(s) => Value::String(Shared::new(s)),
-            Self::StaticString(s) => Value::StaticString(s),
+            Self::String(s) => Value::String(match s {
+                StringConstValue::Dynamic(s) => StringValue::Dynamic(Shared::new(s)),
+                StringConstValue::Static(s) => StringValue::Static(s),
+            }),
             Self::Bytes(b) => Value::Bytes(Shared::new(b)),
             Self::Option(option) => Value::Option(Shared::new(match option {
                 Some(some) => Some(some.into_value()),
@@ -106,7 +107,6 @@ impl ConstValue {
             Self::Char(..) => TypeInfo::StaticType(crate::CHAR_TYPE),
             Self::Bool(..) => TypeInfo::StaticType(crate::BOOL_TYPE),
             Self::String(..) => TypeInfo::StaticType(crate::STRING_TYPE),
-            Self::StaticString(..) => TypeInfo::StaticType(crate::STRING_TYPE),
             Self::Bytes(..) => TypeInfo::StaticType(crate::BYTES_TYPE),
             Self::Integer(..) => TypeInfo::StaticType(crate::INTEGER_TYPE),
             Self::Float(..) => TypeInfo::StaticType(crate::FLOAT_TYPE),
@@ -127,11 +127,10 @@ impl FromValue for ConstValue {
             Value::Bool(b) => Self::Bool(b),
             Value::Integer(n) => Self::Integer(n),
             Value::Float(f) => Self::Float(f),
-            Value::String(s) => {
-                let s = s.take()?;
-                Self::String(s)
-            }
-            Value::StaticString(s) => Self::StaticString(s),
+            Value::String(s) => ConstValue::String(match s {
+                StringValue::Dynamic(s) => StringConstValue::Dynamic(s.take()?),
+                StringValue::Static(s) => StringConstValue::Static(s),
+            }),
             Value::Option(option) => Self::Option(match option.take()? {
                 Some(some) => Some(Box::new(Self::from_value(some)?)),
                 None => None,
@@ -211,8 +210,10 @@ impl ser::Serialize for ConstValue {
             Self::Byte(c) => serializer.serialize_u8(*c),
             Self::Integer(integer) => serializer.serialize_i64(*integer),
             Self::Float(float) => serializer.serialize_f64(*float),
-            Self::StaticString(string) => serializer.serialize_str(string.as_ref()),
-            Self::String(string) => serializer.serialize_str(&*string),
+            Self::String(string) => match string {
+                StringConstValue::Dynamic(s) => serializer.serialize_str(s.as_str()),
+                StringConstValue::Static(s) => serializer.serialize_str(s.as_ref()),
+            },
             Self::Bytes(bytes) => serializer.serialize_bytes(&*bytes),
             Self::Vec(vec) => {
                 let mut serializer = serializer.serialize_seq(Some(vec.len()))?;
@@ -260,7 +261,9 @@ impl<'de> de::Visitor<'de> for ConstValueVisitor {
     where
         E: de::Error,
     {
-        Ok(ConstValue::String(value.to_owned()))
+        Ok(ConstValue::String(StringConstValue::Dynamic(
+            value.to_owned(),
+        )))
     }
 
     #[inline]
@@ -268,7 +271,7 @@ impl<'de> de::Visitor<'de> for ConstValueVisitor {
     where
         E: de::Error,
     {
-        Ok(ConstValue::String(value))
+        Ok(ConstValue::String(StringConstValue::Dynamic(value)))
     }
 
     #[inline]
@@ -421,5 +424,25 @@ impl<'de> de::Visitor<'de> for ConstValueVisitor {
         }
 
         Ok(ConstValue::Object(object))
+    }
+}
+
+/// The constant value representation of the string.
+#[derive(Debug, Clone)]
+pub enum StringConstValue {
+    /// A dynamic string constant value.
+    Dynamic(String),
+    /// A static string constant value.
+    Static(Arc<StaticString>),
+}
+
+impl ops::Deref for StringConstValue {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            StringConstValue::Dynamic(string) => string,
+            StringConstValue::Static(string) => string.as_ref(),
+        }
     }
 }

@@ -77,9 +77,6 @@ impl Command {
                 Value::String(s) => {
                     self.inner.arg(&*s.borrow_ref()?);
                 }
-                Value::StaticString(s) => {
-                    self.inner.arg(&***s);
-                }
                 actual => {
                     return Err(VmError::expected::<String>(actual.type_info()?));
                 }

@@ -1886,15 +1886,8 @@ impl Vm {
         // This is a useful pattern.
         #[allow(clippy::never_loop)]
         loop {
-            // NB: local storage for string.
-            let local_field;
-
             let field = match &index {
-                Value::String(string) => {
-                    local_field = string.borrow_ref()?;
-                    local_field.as_str()
-                }
-                Value::StaticString(string) => string.as_ref(),
+                Value::String(string) => string.borrow_ref()?,
                 _ => break,
             };
 
@@ -1907,7 +1900,7 @@ impl Vm {
                 Value::Struct(typed_object) => {
                     let mut typed_object = typed_object.borrow_mut()?;
 
-                    if let Some(v) = typed_object.get_mut(field) {
+                    if let Some(v) = typed_object.get_mut(&*field) {
                         *v = value;
                         return Ok(());
                     }
@@ -1921,7 +1914,7 @@ impl Vm {
                     let mut variant = variant.borrow_mut()?;
 
                     if let VariantData::Struct(st) = variant.data_mut() {
-                        if let Some(v) = st.get_mut(field) {
+                        if let Some(v) = st.get_mut(&*field) {
                             *v = value;
                             return Ok(());
                         }
@@ -1984,16 +1977,9 @@ impl Vm {
 
         match &index {
             Value::String(string) => {
-                let string_ref = string.borrow_ref()?;
+                let string = string.borrow_ref()?;
 
-                if let Some(value) = Self::try_object_like_index_get(&target, string_ref.as_str())?
-                {
-                    self.stack.push(value);
-                    return Ok(());
-                }
-            }
-            Value::StaticString(string) => {
-                if let Some(value) = Self::try_object_like_index_get(&target, string.as_ref())? {
+                if let Some(value) = Self::try_object_like_index_get(&target, &*string)? {
                     self.stack.push(value);
                     return Ok(());
                 }
@@ -2282,9 +2268,6 @@ impl Vm {
                 Value::String(string) => {
                     out.push_str(&*string.borrow_ref()?);
                 }
-                Value::StaticString(string) => {
-                    out.push_str(string.as_ref());
-                }
                 Value::Integer(integer) => {
                     let mut buffer = itoa::Buffer::new();
                     out.push_str(buffer.format(integer));
@@ -2299,7 +2282,7 @@ impl Vm {
                     if !self.call_instance_fn(
                         actual.clone(),
                         Protocol::STRING_DISPLAY,
-                        (Value::String(b.clone()),),
+                        (b.clone(),),
                     )? {
                         return Err(VmError::from(VmErrorKind::MissingProtocol {
                             protocol: Protocol::STRING_DISPLAY,
@@ -2427,22 +2410,14 @@ impl Vm {
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_eq_static_string(&mut self, slot: usize) -> Result<(), VmError> {
         let value = self.stack.pop()?;
+        let string = self.unit.lookup_string(slot)?;
 
         let equal = match value {
-            Value::String(actual) => {
-                let string = self.unit.lookup_string(slot)?;
-                let actual = actual.borrow_ref()?;
-                *actual == ***string
-            }
-            Value::StaticString(actual) => {
-                let string = self.unit.lookup_string(slot)?;
-                **actual == ***string
-            }
+            Value::String(actual) => &*actual.borrow_ref()? == ***string,
             _ => false,
         };
 
         self.stack.push(Value::Bool(equal));
-
         Ok(())
     }
 

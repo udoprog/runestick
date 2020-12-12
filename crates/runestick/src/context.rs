@@ -1,11 +1,11 @@
+use crate::collections::{HashMap, HashSet};
+use crate::module::{
+    ModuleAssociatedFn, ModuleFn, ModuleInternalEnum, ModuleMacro, ModuleType, ModuleUnitType,
+};
 use crate::{
-    collections::{HashMap, HashSet},
-    module::{
-        ModuleAssociatedFn, ModuleFn, ModuleInternalEnum, ModuleMacro, ModuleType, ModuleUnitType,
-    },
     CompileMeta, CompileMetaKind, CompileMetaStruct, CompileMetaTuple, ComponentRef, ConstValue,
     Hash, IntoComponent, Item, Module, Names, Protocol, RuntimeContext, Stack, StaticType,
-    TypeCheck, TypeInfo, TypeOf, VmError,
+    StringConstValue, TypeCheck, TypeInfo, TypeOf, VmError,
 };
 use std::{any, fmt, sync::Arc};
 
@@ -469,7 +469,7 @@ impl Context {
 
         self.constants.insert(
             Hash::instance_function(info.type_hash, Protocol::INTO_TYPE_NAME),
-            ConstValue::String(info.item.to_string()),
+            ConstValue::String(StringConstValue::Dynamic(info.item.to_string())),
         );
 
         if let Some(existing) = self.types.insert(hash, info) {
@@ -509,7 +509,7 @@ impl Context {
 
         self.constants.insert(
             Hash::instance_function(hash, Protocol::INTO_TYPE_NAME),
-            ConstValue::String(item.to_string()),
+            ConstValue::String(StringConstValue::Dynamic(item.to_string())),
         );
 
         self.functions.insert(hash, f.handler.clone());
@@ -575,7 +575,7 @@ impl Context {
 
         self.constants.insert(
             Hash::instance_function(hash, Protocol::INTO_TYPE_NAME),
-            ConstValue::String(item.to_string()),
+            ConstValue::String(StringConstValue::Dynamic(item.to_string())),
         );
 
         if let Some(old) = self.functions_info.insert(hash, signature) {
@@ -744,7 +744,7 @@ impl Context {
 
         self.constants.insert(
             Hash::instance_function(type_hash, Protocol::INTO_TYPE_NAME),
-            ConstValue::String(item.to_string()),
+            ConstValue::String(StringConstValue::Dynamic(item.to_string())),
         );
 
         let signature = ContextSignature::Function {

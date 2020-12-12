@@ -1,7 +1,7 @@
 //! Types for dealing with formatting specifications.
 
 use crate::protocol_caller::ProtocolCaller;
-use crate::{FromValue, InstallWith, Named, RawStr, Value, VmError, VmErrorKind};
+use crate::{FromValue, InstallWith, Named, RawStr, StringValue, Value, VmError, VmErrorKind};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Write as _;
@@ -185,14 +185,16 @@ impl FormatSpec {
                 buf.push(*c);
                 self.format_fill(out, buf, self.align, self.fill, None);
             }
-            Value::String(s) => {
-                buf.push_str(&*s.borrow_ref()?);
-                self.format_fill(out, buf, self.align, self.fill, None);
-            }
-            Value::StaticString(s) => {
-                buf.push_str(s.as_ref());
-                self.format_fill(out, buf, self.align, self.fill, None);
-            }
+            Value::String(s) => match s {
+                StringValue::Dynamic(s) => {
+                    buf.push_str(&*s.borrow_ref()?);
+                    self.format_fill(out, buf, self.align, self.fill, None);
+                }
+                StringValue::Static(s) => {
+                    buf.push_str(s.as_ref());
+                    self.format_fill(out, buf, self.align, self.fill, None);
+                }
+            },
             Value::Integer(n) => {
                 let (n, align, fill, sign) = self.int_traits(*n);
                 self.format_number(buf, n);
@@ -219,12 +221,14 @@ impl FormatSpec {
         caller: impl ProtocolCaller,
     ) -> Result<(), VmError> {
         match value {
-            Value::String(s) => {
-                write!(out, "{:?}", &*s.borrow_ref()?).map_err(|_| VmErrorKind::FormatError)?;
-            }
-            Value::StaticString(s) => {
-                write!(out, "{:?}", s.as_ref()).map_err(|_| VmErrorKind::FormatError)?;
-            }
+            Value::String(s) => match s {
+                StringValue::Dynamic(s) => {
+                    write!(out, "{:?}", &*s.borrow_ref()?).map_err(|_| VmErrorKind::FormatError)?;
+                }
+                StringValue::Static(s) => {
+                    write!(out, "{:?}", s.as_ref()).map_err(|_| VmErrorKind::FormatError)?;
+                }
+            },
             Value::Integer(n) => {
                 let (n, align, fill, sign) = self.int_traits(*n);
                 self.format_number(buf, n);

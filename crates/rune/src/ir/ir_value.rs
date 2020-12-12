@@ -1,6 +1,6 @@
 use crate::collections::HashMap;
 use crate::{IrError, IrErrorKind, Spanned};
-use runestick::{Bytes, ConstValue, Shared, TypeInfo};
+use runestick::{Bytes, ConstValue, Shared, StringConstValue, TypeInfo};
 use std::convert::TryFrom;
 
 /// A constant value.
@@ -42,8 +42,12 @@ impl IrValue {
             ConstValue::Bool(b) => Self::Bool(b),
             ConstValue::Integer(n) => Self::Integer(n.into()),
             ConstValue::Float(n) => Self::Float(n),
-            ConstValue::String(s) => Self::String(Shared::new(s)),
-            ConstValue::StaticString(s) => Self::String(Shared::new((**s).to_owned())),
+            ConstValue::String(string) => match string {
+                StringConstValue::Dynamic(string) => Self::String(Shared::new(string)),
+                StringConstValue::Static(string) => {
+                    Self::String(Shared::new(string.as_str().to_owned()))
+                }
+            },
             ConstValue::Bytes(b) => Self::Bytes(Shared::new(b.into_vec())),
             ConstValue::Option(option) => Self::Option(Shared::new(match option {
                 Some(some) => Some(Self::from_const(*some)),
@@ -104,7 +108,7 @@ impl IrValue {
             IrValue::Float(f) => ConstValue::Float(f),
             IrValue::String(s) => {
                 let s = s.take().map_err(IrError::access(spanned))?;
-                ConstValue::String(s)
+                ConstValue::String(StringConstValue::Dynamic(s))
             }
             IrValue::Bytes(b) => {
                 let b = b.take().map_err(IrError::access(spanned))?;

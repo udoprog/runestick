@@ -154,7 +154,7 @@ pub use self::compile_meta::{
     CompileItem, CompileMeta, CompileMetaCapture, CompileMetaEmpty, CompileMetaKind,
     CompileMetaStruct, CompileMetaTuple, CompileMod, CompileSource,
 };
-pub use self::const_value::ConstValue;
+pub use self::const_value::{ConstValue, StringConstValue};
 pub use self::format::{Format, FormatSpec};
 pub use self::from_value::{FromValue, UnsafeFromValue};
 pub use self::generator::Generator;
@@ -162,7 +162,7 @@ pub use self::generator_state::GeneratorState;
 pub use self::guarded_args::GuardedArgs;
 pub use self::id::Id;
 pub use self::iterator::Iterator;
-pub use self::key::Key;
+pub use self::key::{Key, StringKey};
 pub use self::label::{DebugLabel, Label};
 pub use self::location::Location;
 pub use self::module::{InstFnNameHash, InstallWith, Module};
@@ -213,7 +213,7 @@ pub use crate::shared::{Mut, RawMut, RawRef, Ref, Shared, SharedPointerGuard};
 pub use crate::stack::{Stack, StackError};
 pub use crate::type_of::TypeOf;
 pub use crate::unit::{Unit, UnitFn};
-pub use crate::value::{Rtti, Struct, TupleStruct, UnitStruct, Value, VariantRtti};
+pub use crate::value::{Rtti, StringValue, Struct, TupleStruct, UnitStruct, Value, VariantRtti};
 pub use crate::vec_tuple::VecTuple;
 pub use crate::visibility::Visibility;
 pub use crate::vm::{CallFrame, Vm};

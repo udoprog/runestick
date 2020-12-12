@@ -2,7 +2,7 @@ use crate::ir;
 use crate::query::BuiltInMacro;
 use crate::query::BuiltInTemplate;
 use crate::{IrErrorKind, Resolve, Spanned, Storage};
-use runestick::{Bytes, ConstValue, Source};
+use runestick::{Bytes, ConstValue, Source, StringConstValue};
 use std::sync::Arc;
 
 use crate::ast;
@@ -118,7 +118,10 @@ impl IrCompile for ast::Expr {
                     }
                     BuiltInMacro::File(file) => {
                         let s = c.resolve(&file.value)?;
-                        ir::Ir::new(file.span, ConstValue::String(s.as_ref().to_owned()))
+                        ir::Ir::new(
+                            file.span,
+                            ConstValue::String(StringConstValue::Dynamic(s.as_ref().to_owned())),
+                        )
                     }
                     BuiltInMacro::Line(line) => {
                         let n = c.resolve(&line.value)?;
@@ -300,7 +303,10 @@ impl IrCompile for ast::ExprLit {
             ast::Lit::Bool(b) => ir::Ir::new(span, ConstValue::Bool(b.value)),
             ast::Lit::Str(s) => {
                 let s = c.resolve(s)?;
-                ir::Ir::new(span, ConstValue::String(s.as_ref().to_owned()))
+                ir::Ir::new(
+                    span,
+                    ConstValue::String(StringConstValue::Dynamic(s.as_ref().to_owned())),
+                )
             }
             ast::Lit::Number(n) => {
                 let n = c.resolve(n)?;

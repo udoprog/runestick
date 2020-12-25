@@ -178,10 +178,13 @@ impl CompileBuildEntry<'_> {
         location: Location,
         source: &'a Arc<Source>,
         span: Span,
-        sm: &'a mut rune_ssa::Program,
+        program: &'a mut rune_ssa::Program,
     ) -> self::v2::Compiler<'a> {
+        let block = program.block();
+
         self::v2::Compiler {
-            sm,
+            program,
+            block,
             location,
             contexts: vec![span],
             source,
@@ -222,7 +225,7 @@ impl CompileBuildEntry<'_> {
                 f.ast.assemble_fn(&mut c, false)?;
 
                 // NB: experimental compiler that is work-in-progress
-                if false {
+                if true {
                     let mut c2 = self.compiler2(location, &source, span, &mut program);
 
                     match self::v2::AssembleFn::assemble_fn(f.ast.as_ref(), &mut c2, false) {

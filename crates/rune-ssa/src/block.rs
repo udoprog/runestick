@@ -116,6 +116,15 @@ impl Block {
             .push(Inst::Value(value));
     }
 
+    /// Unconditionally jump to the given block.
+    pub fn jump(&self, block: &Block, input: &[ValueId]) -> Result<(), Error> {
+        let jump = self.block_jump(block, input)?;
+
+        self.inner.instructions.borrow_mut().push(Inst::Jump(jump));
+
+        Ok(())
+    }
+
     /// Perform a conditional jump to the given block with the specified inputs
     /// if the given condition is true.
     pub fn jump_if(&self, cond: ValueId, block: &Block, input: &[ValueId]) -> Result<(), Error> {
@@ -183,7 +192,7 @@ impl Block {
 
         // Mark this block as an ancestor to the block we're jumping to.
         block.inner.ancestors.borrow_mut().push(self.inner.id);
-        Ok(BlockJump(self.inner.id, input.into()))
+        Ok(BlockJump(block.inner.id, input.into()))
     }
 }
 

@@ -1,21 +1,15 @@
 use crate::compiling::v2::assemble::prelude::*;
 
 impl AssembleFn for ast::ItemFn {
-    fn assemble_fn(
-        &self,
-        c: &mut Compiler<'_>,
-        instance_fn: bool,
-    ) -> CompileResult<rune_ssa::Block> {
+    fn assemble_fn(&self, c: &mut Compiler<'_>, instance_fn: bool) -> CompileResult<()> {
         let span = self.span();
         log::trace!("ItemFn => {:?}", c.source.source(span));
-
-        let block = c.sm.block();
 
         let mut first = true;
 
         for (arg, _) in &self.args {
             let span = arg.span();
-            let value = block.input();
+            let value = c.block.input();
             let first = std::mem::take(&mut first);
 
             match arg {
@@ -44,8 +38,8 @@ impl AssembleFn for ast::ItemFn {
             }
         }
 
-        let value = self.body.assemble(&block, c)?;
-        block.return_(value);
-        Ok(block)
+        let value = self.body.assemble(c)?;
+        c.block.return_(value);
+        Ok(())
     }
 }

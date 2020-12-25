@@ -1,6 +1,6 @@
 use crate::compiling::v2::Compiler;
 use crate::compiling::CompileResult;
-use rune_ssa::{Block, ValueId};
+use rune_ssa::ValueId;
 
 mod block;
 mod expr;
@@ -12,11 +12,11 @@ mod prelude;
 /// This is the new compiler trait to implement.
 pub(crate) trait Assemble {
     /// Walk the current type with the given item.
-    fn assemble(&self, block: &Block, c: &mut Compiler<'_>) -> CompileResult<ValueId>;
+    fn assemble(&self, c: &mut Compiler<'_>) -> CompileResult<ValueId>;
 }
 
 /// Assemble a function.
 pub(crate) trait AssembleFn {
     /// Assemble a function.
-    fn assemble_fn(&self, c: &mut Compiler<'_>, instance_fn: bool) -> CompileResult<Block>;
+    fn assemble_fn(&self, c: &mut Compiler<'_>, instance_fn: bool) -> CompileResult<()>;
 }

@@ -2,7 +2,7 @@ use crate::compiling::v2::assemble::prelude::*;
 
 /// Assembler for a block.
 impl Assemble for ast::Block {
-    fn assemble(&self, block: &Block, c: &mut Compiler<'_>) -> CompileResult<ValueId> {
+    fn assemble(&self, c: &mut Compiler<'_>) -> CompileResult<ValueId> {
         let span = self.span();
         log::trace!("Block => {:?}", c.source.source(span));
 
@@ -16,24 +16,24 @@ impl Assemble for ast::Block {
                 ast::Stmt::Local(..) => {
                     continue;
                 }
-                ast::Stmt::Expr(expr, semi) => (expr.assemble(&block, c)?, semi),
+                ast::Stmt::Expr(expr, semi) => (expr.assemble(c)?, semi),
                 ast::Stmt::Item(..) => continue,
             };
 
             // Force a use of the last evaluated value in case it's replaced.
             if let Some(last) = last.take() {
-                block.use_(last);
+                c.block.use_(last);
             }
 
             // NB: semi-colons were checked during parsing.
             if semi.is_some() {
-                block.use_(next);
+                c.block.use_(next);
             } else {
                 last = Some(next);
             }
         }
 
         c.scope.pop(span)?;
-        Ok(last.unwrap_or_else(|| block.unit()))
+        Ok(last.unwrap_or_else(|| c.block.unit()))
     }
 }

@@ -19,6 +19,8 @@ pub enum Inst {
     Mul(ValueId, ValueId),
     /// Conditionally jump to the given block if the given condition is true.
     JumpIf(ValueId, BlockJump),
+    /// Unconditionally jump to the given block if the given condition is true.
+    Jump(BlockJump),
     /// Return from the current procedure with the given value.
     Return(ValueId),
     /// Compare if `lhs < rhs`.
@@ -68,6 +70,9 @@ impl fmt::Display for InstDump<'_> {
             }
             Inst::JumpIf(cond, block) => {
                 write!(f, "jump-if {}, {}", cond, block)?;
+            }
+            Inst::Jump(block) => {
+                write!(f, "jump {}", block)?;
             }
             Inst::Return(value) => {
                 write!(f, "return {}", value)?;

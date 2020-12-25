@@ -15,7 +15,9 @@ pub(crate) use self::assemble::{Assemble, AssembleFn};
 #[allow(unused)]
 pub(crate) struct Compiler<'a> {
     /// Program being compiled.
-    pub(crate) sm: &'a mut rune_ssa::Program,
+    pub(crate) program: &'a mut rune_ssa::Program,
+    /// Current block being assembled.
+    pub(crate) block: rune_ssa::Block,
     /// The source id of the source.
     pub(crate) location: Location,
     /// The source we are compiling for.

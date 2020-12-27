@@ -1,38 +1,35 @@
-use crate::{BlockJump, ConstId, Phi, ValueId};
+use crate::{ConstId, Dep, Phi, Var};
 use std::fmt;
 
 /// A single abstract machine instruction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Inst {
+    /// A numerated input.
+    Input(usize),
     /// An instruction to load a constant as a value.
     Const(ConstId),
     /// An instruction directly references a different value.
-    Value(ValueId),
+    Var(Dep),
     /// A phony use node, indicating what assignments flow into this.
     Phi(Phi),
     /// Compute `lhs + rhs`.
-    Add(ValueId, ValueId),
+    Add(Var, Var),
     /// Compute `lhs - rhs`.
-    Sub(ValueId, ValueId),
+    Sub(Var, Var),
     /// Compute `lhs / rhs`.
-    Div(ValueId, ValueId),
+    Div(Var, Var),
     /// Compute `lhs * rhs`.
-    Mul(ValueId, ValueId),
-    /// Conditionally jump to the given block if the given condition is true.
-    JumpIf(ValueId, BlockJump),
-    /// Unconditionally jump to the given block if the given condition is true.
-    Jump(BlockJump),
-    /// Return from the current procedure with the given value.
-    Return(ValueId),
+    Mul(Var, Var),
     /// Compare if `lhs < rhs`.
-    CmpLt(ValueId, ValueId),
+    CmpLt(Var, Var),
     /// Compare if `lhs <= rhs`.
-    CmpLte(ValueId, ValueId),
+    CmpLte(Var, Var),
     /// Compare if `lhs == rhs`.
-    CmpEq(ValueId, ValueId),
+    CmpEq(Var, Var),
     /// Compare if `lhs > rhs`.
-    CmpGt(ValueId, ValueId),
+    CmpGt(Var, Var),
     /// Compare if `lhs >= rhs`.
-    CmpGte(ValueId, ValueId),
+    CmpGte(Var, Var),
 }
 
 impl Inst {
@@ -47,11 +44,14 @@ pub struct InstDump<'a>(&'a Inst);
 impl fmt::Display for InstDump<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
+            Inst::Input(n) => {
+                write!(f, "input {}", n)?;
+            }
             Inst::Const(id) => {
                 write!(f, "{}", id)?;
             }
-            Inst::Value(v) => {
-                write!(f, "{}", v)?;
+            Inst::Var(dep) => {
+                write!(f, "{}", dep)?;
             }
             Inst::Phi(phi) => {
                 write!(f, "{}", phi)?;
@@ -67,15 +67,6 @@ impl fmt::Display for InstDump<'_> {
             }
             Inst::Mul(lhs, rhs) => {
                 write!(f, "mul {}, {}", lhs, rhs)?;
-            }
-            Inst::JumpIf(cond, block) => {
-                write!(f, "jump-if {}, {}", cond, block)?;
-            }
-            Inst::Jump(block) => {
-                write!(f, "jump {}", block)?;
-            }
-            Inst::Return(value) => {
-                write!(f, "return {}", value)?;
             }
             Inst::CmpLt(lhs, rhs) => {
                 write!(f, "lt {}, {}", lhs, rhs)?;

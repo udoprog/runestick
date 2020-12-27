@@ -8,40 +8,41 @@ mod inst;
 mod internal;
 mod phi;
 mod program;
+mod term;
 
-pub use self::block::{Block, BlockJump};
+pub use self::block::Block;
 pub use self::constant::Constant;
 pub use self::error::Error;
-pub use self::global::{BlockId, ConstId, ValueId};
+pub use self::global::{BlockId, ConstId, Var};
 pub use self::inst::Inst;
-pub use self::phi::Phi;
+pub use self::phi::{Dep, Phi};
 pub use self::program::Program;
+pub use self::term::Term;
 
 #[cfg(test)]
 mod tests {
     use super::{Constant, Error, Program};
 
     #[test]
-    fn test_basic_sm() -> Result<(), Error> {
-        let mut sm = Program::new();
+    fn test_basic_program() -> Result<(), Error> {
+        let mut program = Program::new();
 
-        let block = sm.named("main");
-        let then = sm.block();
+        let end = program.block();
+        let entry = program.named("main");
+        let then_block = program.block();
 
-        let else_value = then.input();
-        then.return_(else_value);
+        let a = entry.input();
+        let b = entry.constant(Constant::Integer(10));
+        let condition = entry.cmp_lt(a, b);
+        entry.jump_if(condition, &then_block, &end);
 
-        // Define one input variable to the block.
-        let a = block.input();
-        let b = block.constant(Constant::Integer(42));
-        let unit = block.constant(Constant::Unit);
-        let c = block.add(a, b);
+        let c = then_block.constant(Constant::Integer(1));
+        then_block.assign_add(a, a, c);
+        then_block.jump(&end);
 
-        let d = block.cmp_lt(c, b);
-        block.jump_if(d, &then, &[b])?;
-        block.return_(unit);
+        end.return_(a);
 
-        println!("{}", sm.dump());
+        println!("{}", program.dump());
         Ok(())
     }
 }

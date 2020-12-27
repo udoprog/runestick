@@ -102,7 +102,7 @@ impl Assemble for ast::ExprIf {
         let out = c.program.block();
         let value = out.input();
 
-        let then = self.block.assemble_block(c)?;
+        let then = c.program.block();
 
         let cond = self.condition.assemble(c)?;
 

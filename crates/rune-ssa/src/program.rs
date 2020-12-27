@@ -1,5 +1,5 @@
 use crate::global::Global;
-use crate::Block;
+use crate::{Block, Var};
 use std::fmt;
 
 /// The central state machine assembler.
@@ -17,16 +17,21 @@ impl Program {
         }
     }
 
+    /// Allocate a new value.
+    pub fn var(&self) -> Var {
+        self.global.var()
+    }
+
     /// Construct a new block associated with the state machine.
     pub fn block(&mut self) -> Block {
-        let block = Block::new(self.global.clone(), None);
+        let block = self.global.block(None);
         self.blocks.push(block.clone());
         block
     }
 
     /// Construct a block with a name.
     pub fn named(&mut self, name: &str) -> Block {
-        let block = Block::new(self.global.clone(), Some(name.into()));
+        let block = self.global.block(Some(name.into()));
         self.blocks.push(block.clone());
         block
     }

@@ -1,11 +1,11 @@
-use crate::Constant;
+use crate::{Block, Constant};
 use hashbrown::HashMap;
 use std::cell::{Cell, Ref, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
 /// The identifier of a constant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstId(usize);
 
 impl fmt::Display for ConstId {
@@ -17,16 +17,16 @@ impl fmt::Display for ConstId {
 /// A variable that can be used as block entries or temporaries.
 /// Instructions typically produce and use vars.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ValueId(usize);
+pub struct Var(usize);
 
-impl fmt::Display for ValueId {
+impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v{}", self.0)
     }
 }
 
 /// Identifier to a block.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(usize);
 
 impl fmt::Display for BlockId {
@@ -36,24 +36,33 @@ impl fmt::Display for BlockId {
 }
 
 /// Global construction state of the state machine.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Global {
     inner: Rc<GlobalInner>,
 }
 
 impl Global {
     /// Allocate a global variable.
-    pub(crate) fn value(&self) -> ValueId {
+    pub(crate) fn var(&self) -> Var {
         let id = self.inner.value.get();
         self.inner.value.set(id + 1);
-        ValueId(id)
+        Var(id)
     }
 
-    /// Allocate a global block identifier.
-    pub(crate) fn block(&self) -> BlockId {
-        let id = self.inner.block.get();
-        self.inner.block.set(id + 1);
-        BlockId(id)
+    /// Get the block corresponding to the given id.
+    pub(crate) fn get_block(&self, id: BlockId) -> Block {
+        match self.inner.blocks.borrow().get(id.0) {
+            Some(block) => block.clone(),
+            None => panic!("missing block with id: {}", id),
+        }
+    }
+
+    /// Allocate a block.
+    pub(crate) fn block(&self, name: Option<Box<str>>) -> Block {
+        let id = BlockId(self.inner.blocks.borrow().len());
+        let block = Block::new(id, self.clone(), name);
+        self.inner.blocks.borrow_mut().push(block.clone());
+        block
     }
 
     /// Allocate a constant.
@@ -101,12 +110,11 @@ impl Global {
 }
 
 /// Inner state of the global.
-#[derive(Debug)]
 struct GlobalInner {
     /// Variable allocator.
     value: Cell<usize>,
     /// Block allocator.
-    block: Cell<usize>,
+    blocks: RefCell<Vec<Block>>,
     /// The values of constants.
     constants: RefCell<Vec<Constant>>,
     /// Constant strings that have already been allocated.
@@ -119,7 +127,7 @@ impl Default for GlobalInner {
     fn default() -> Self {
         Self {
             value: Default::default(),
-            block: Default::default(),
+            blocks: Default::default(),
             constants: RefCell::new(vec![Constant::Unit]),
             constant_string_rev: Default::default(),
             constant_bytes_rev: Default::default(),

@@ -1,37 +1,26 @@
 use crate::global::Global;
 use crate::internal::commas;
-use crate::{BlockId, Constant, Error, Inst, Phi, ValueId};
+use crate::{BlockId, Constant, Dep, Error, Inst, Phi, Term, Var};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-/// A jump into a block which carries a collection of values with it as inputs
-/// to the block.
-#[derive(Debug, Clone)]
-pub struct BlockJump(BlockId, Box<[ValueId]>);
-
-impl fmt::Display for BlockJump {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.1.is_empty() {
-            write!(f, "{}", self.0)
-        } else {
-            write!(f, "{}({})", self.0, commas(self.1.as_ref()))
-        }
-    }
-}
-
 /// Macro to help build a binary op.
 macro_rules! block_binary_op {
-    ($name:ident, $variant:ident, $doc:literal) => {
+    ($new:ident, $assign:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
-        pub fn $name(&self, lhs: ValueId, rhs: ValueId) -> ValueId {
-            let value = self.inner.global.value();
-            self.inner
-                .assignments
-                .borrow_mut()
-                .insert(value, Inst::$variant(lhs, rhs));
-            value
+        pub fn $new(&self, a: Var, b: Var) -> Var {
+            self.read(a);
+            self.read(b);
+            self.assign_new(Inst::$variant(a, b))
+        }
+
+        #[doc = $doc]
+        pub fn $assign(&self, id: Var, a: Var, b: Var) {
+            self.read(a);
+            self.read(b);
+            self.assign(id, Inst::$variant(a, b));
         }
     }
 }
@@ -47,21 +36,87 @@ pub struct Block {
 
 impl Block {
     /// Construct a new empty block.
-    pub(crate) fn new(global: Global, name: Option<Box<str>>) -> Self {
-        let id = global.block();
-
+    pub(crate) fn new(id: BlockId, global: Global, name: Option<Box<str>>) -> Self {
         Self {
             inner: Rc::new(BlockInner {
                 id,
+                inputs: Cell::new(0),
                 name,
                 global,
                 finalized: Cell::new(false),
-                inputs: RefCell::new(Vec::new()),
                 assignments: RefCell::new(BTreeMap::new()),
-                instructions: RefCell::new(Vec::new()),
+                term: RefCell::new(Term::Panic),
                 ancestors: RefCell::new(Vec::new()),
             }),
         }
+    }
+
+    /// Read the given variable, looking it up recursively in ancestor blocks
+    /// and memoizing as needed.
+    fn read(&self, var: Var) {
+        // Local assignment that is already present.
+        if self.inner.assignments.borrow().contains_key(&var) {
+            return;
+        }
+
+        self.read_recursive(var);
+    }
+
+    /// Read the given variable recursively.
+    fn read_recursive(&self, var: Var) -> Dep {
+        let dep = Dep {
+            block: self.id(),
+            var,
+        };
+
+        if let Some(inst) = self.inner.assignments.borrow().get(&var) {
+            return match inst {
+                Inst::Var(dep) => dep.clone(),
+                _ => dep,
+            };
+        }
+
+        self.inner
+            .assignments
+            .borrow_mut()
+            .insert(var, Inst::Phi(Phi::default()));
+
+        let mut dependencies = Vec::new();
+
+        for ancestor in self.inner.ancestors.borrow().iter() {
+            let block = self.inner.global.get_block(*ancestor);
+            let dep = block.read_recursive(var);
+            dependencies.push(dep);
+        }
+
+        if let Some(Inst::Phi(phi)) = self.inner.assignments.borrow_mut().get_mut(&var) {
+            for d in dependencies {
+                phi.insert(d);
+            }
+        }
+
+        dep
+    }
+
+    /// Assign an instruction to a new vvar.
+    fn assign_new(&self, inst: Inst) -> Var {
+        let var = self.inner.global.var();
+        self.assign(var, inst);
+        var
+    }
+
+    /// Assign an instruction to an existing var.
+    fn assign(&self, id: Var, inst: Inst) {
+        self.inner.assignments.borrow_mut().insert(id, inst);
+    }
+
+    /// Define an input into the block.
+    pub fn input(&self) -> Var {
+        let id = self.inner.global.var();
+        let input = self.inner.inputs.get();
+        self.inner.inputs.set(input + 1);
+        self.assign(id, Inst::Input(input));
+        id
     }
 
     /// Finalize the block.
@@ -81,118 +136,71 @@ impl Block {
         BlockDump(self)
     }
 
-    /// Allocate an input variable.
-    pub fn input(&self) -> ValueId {
-        let value = self.inner.global.value();
-        self.inner.inputs.borrow_mut().push(value);
-        self.inner
-            .assignments
-            .borrow_mut()
-            .insert(value, Inst::Phi(Phi::default()));
-        value
-    }
-
     /// Define a unit.
-    pub fn unit(&self) -> ValueId {
+    pub fn unit(&self) -> Var {
         self.constant(Constant::Unit)
     }
 
-    /// Load a constant as a variable.
-    pub fn constant(&self, constant: Constant) -> ValueId {
-        let value = self.inner.global.value();
+    /// Assign a unit.
+    pub fn assign_unit(&self, id: Var) {
+        self.assign_constant(id, Constant::Unit);
+    }
+
+    /// Define a constant.
+    pub fn constant(&self, constant: Constant) -> Var {
         let const_id = self.inner.global.constant(constant);
-        self.inner
-            .assignments
-            .borrow_mut()
-            .insert(value, Inst::Const(const_id));
-        value
+        self.assign_new(Inst::Const(const_id))
     }
 
-    /// Force a use of the given value.
-    pub fn use_(&self, value: ValueId) {
-        self.inner
-            .instructions
-            .borrow_mut()
-            .push(Inst::Value(value));
+    /// Assign a constant.
+    pub fn assign_constant(&self, id: Var, constant: Constant) {
+        let const_id = self.inner.global.constant(constant);
+        self.assign(id, Inst::Const(const_id));
     }
 
-    /// Unconditionally jump to the given block.
-    pub fn jump(&self, block: &Block, input: &[ValueId]) -> Result<(), Error> {
-        let jump = self.block_jump(block, input)?;
+    block_binary_op!(add, assign_add, Add, "Compute `lhs + rhs`.");
+    block_binary_op!(sub, assign_sub, Sub, "Compute `lhs - rhs`.");
+    block_binary_op!(div, assign_div, Div, "Compute `lhs / rhs`.");
+    block_binary_op!(mul, assign_mul, Mul, "Compute `lhs * rhs`.");
+    block_binary_op!(cmp_lt, assign_cmp_lt, CmpLt, "Compare if `lhs < rhs`.");
+    block_binary_op!(cmp_lte, assign_cmp_lte, CmpLte, "Compare if `lhs <= rhs`.");
+    block_binary_op!(cmp_eq, assign_cmp_eq, CmpEq, "Compare if `lhs == rhs`.");
+    block_binary_op!(cmp_gt, assign_cmp_gt, CmpGt, "Compare if `lhs > rhs`.");
+    block_binary_op!(cmp_gte, assign_cmp_gte, CmpGte, "Compare if `lhs >= rhs`.");
 
-        self.inner.instructions.borrow_mut().push(Inst::Jump(jump));
+    /// Perform an unconditional jump to the given block with the specified
+    /// inputs.
+    pub fn jump(&self, block: &Block) {
+        block.inner.ancestors.borrow_mut().push(self.id());
 
-        Ok(())
+        *self.inner.term.borrow_mut() = Term::Jump { block: block.id() };
     }
 
     /// Perform a conditional jump to the given block with the specified inputs
     /// if the given condition is true.
-    pub fn jump_if(&self, cond: ValueId, block: &Block, input: &[ValueId]) -> Result<(), Error> {
-        let jump = self.block_jump(block, input)?;
+    pub fn jump_if(&self, condition: Var, then_block: &Block, else_block: &Block) {
+        self.read(condition);
 
-        self.inner
-            .instructions
-            .borrow_mut()
-            .push(Inst::JumpIf(cond, jump));
+        then_block.inner.ancestors.borrow_mut().push(self.id());
+        else_block.inner.ancestors.borrow_mut().push(self.id());
 
-        Ok(())
+        *self.inner.term.borrow_mut() = Term::JumpIf {
+            condition,
+            then_block: then_block.id(),
+            else_block: else_block.id(),
+        };
     }
 
-    block_binary_op!(add, Add, "Compute `lhs + rhs`.");
-    block_binary_op!(sub, Sub, "Compute `lhs - rhs`.");
-    block_binary_op!(div, Div, "Compute `lhs / rhs`.");
-    block_binary_op!(mul, Mul, "Compute `lhs * rhs`.");
-    block_binary_op!(cmp_lt, CmpLt, "Compare if `lhs < rhs`.");
-    block_binary_op!(cmp_lte, CmpLte, "Compare if `lhs <= rhs`.");
-    block_binary_op!(cmp_eq, CmpEq, "Compare if `lhs == rhs`.");
-    block_binary_op!(cmp_gt, CmpGt, "Compare if `lhs > rhs`.");
-    block_binary_op!(cmp_gte, CmpGte, "Compare if `lhs >= rhs`.");
-
-    /// Unconditionally return from this the procedure this block belongs to.
+    /// Return from this the procedure this block belongs to.
     pub fn return_unit(&self) {
-        let value = self.unit();
-
-        self.inner
-            .instructions
-            .borrow_mut()
-            .push(Inst::Return(value));
+        let var = self.unit();
+        *self.inner.term.borrow_mut() = Term::Return { var };
     }
 
-    /// Unconditionally return from this the procedure this block belongs to.
-    pub fn return_(&self, value: ValueId) {
-        self.inner
-            .instructions
-            .borrow_mut()
-            .push(Inst::Return(value));
-    }
-
-    /// Construct and validate a block jump.
-    fn block_jump(&self, block: &Block, input: &[ValueId]) -> Result<BlockJump, Error> {
-        if block.inner.finalized.get() {
-            return Err(Error::BlockControlFinalized { block: block.id() });
-        }
-
-        let inputs = block.inner.inputs.borrow();
-
-        if inputs.len() != input.len() {
-            return Err(Error::BlockInputMismatch {
-                block: block.id(),
-                expected: inputs.len(),
-                actual: input.len(),
-            });
-        }
-
-        for (assignment, input) in inputs.iter().zip(input) {
-            let mut inst = block.inner.assignments.borrow_mut();
-
-            if let Some(Inst::Phi(phi)) = inst.get_mut(assignment) {
-                phi.push(*input);
-            }
-        }
-
-        // Mark this block as an ancestor to the block we're jumping to.
-        block.inner.ancestors.borrow_mut().push(self.inner.id);
-        Ok(BlockJump(block.inner.id, input.into()))
+    /// Return from this the procedure this block belongs to.
+    pub fn return_(&self, var: Var) {
+        self.read(var);
+        *self.inner.term.borrow_mut() = Term::Return { var };
     }
 }
 
@@ -200,14 +208,9 @@ pub struct BlockDump<'a>(&'a Block);
 
 impl fmt::Display for BlockDump<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let inputs = self.0.inner.inputs.borrow();
         let ancestors = self.0.inner.ancestors.borrow();
 
-        if inputs.len() == 0 {
-            write!(f, "{}", self.0.id())?;
-        } else {
-            write!(f, "{}({})", self.0.id(), commas(&*inputs))?;
-        }
+        write!(f, "{}", self.0.id())?;
 
         if ancestors.is_empty() {
             write!(f, ":")?;
@@ -225,10 +228,7 @@ impl fmt::Display for BlockDump<'_> {
             writeln!(f, "  {} <- {}", v, inst.dump())?;
         }
 
-        for inst in self.0.inner.instructions.borrow().iter() {
-            writeln!(f, "  {}", inst.dump())?;
-        }
-
+        writeln!(f, "  {}", self.0.inner.term.borrow().dump())?;
         Ok(())
     }
 }
@@ -236,6 +236,8 @@ impl fmt::Display for BlockDump<'_> {
 struct BlockInner {
     /// The identifier of the block.
     id: BlockId,
+    /// The number of inputs in the block.
+    inputs: Cell<usize>,
     /// If the block is finalized or not.
     ///
     /// Control flows can only be added to non-finalized blocks.
@@ -244,12 +246,10 @@ struct BlockInner {
     name: Option<Box<str>>,
     /// Global shared stack machine state.
     global: Global,
-    /// Input variables.
-    inputs: RefCell<Vec<ValueId>>,
     /// Instructions being built.
-    assignments: RefCell<BTreeMap<ValueId, Inst>>,
+    assignments: RefCell<BTreeMap<Var, Inst>>,
     /// Instructions that do not produce a value.
-    instructions: RefCell<Vec<Inst>>,
+    term: RefCell<Term>,
     /// Ancestor blocks.
     ancestors: RefCell<Vec<BlockId>>,
 }

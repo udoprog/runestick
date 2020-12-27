@@ -1,21 +1,22 @@
 use crate::internal::commas;
-use crate::ValueId;
+use crate::{BlockId, Var};
+use std::collections::BTreeSet;
 use std::fmt;
 
 /// The definition of an input to a block.
 ///
 /// These are essentially phi nodes, and makes sure that there's a local
 /// variable declaration available.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Phi {
     /// Dependencies to this input value.
-    dependencies: Vec<ValueId>,
+    dependencies: BTreeSet<Dep>,
 }
 
 impl Phi {
     /// Push a dependency onto this phi node.
-    pub(crate) fn push(&mut self, value: ValueId) {
-        self.dependencies.push(value);
+    pub(crate) fn insert(&mut self, dep: Dep) {
+        self.dependencies.insert(dep);
     }
 }
 
@@ -28,5 +29,20 @@ impl fmt::Display for Phi {
         }
 
         Ok(())
+    }
+}
+
+/// A single variable dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Dep {
+    /// The block the variable is defined in.
+    pub block: BlockId,
+    /// The variable being depended on.
+    pub var: Var,
+}
+
+impl fmt::Display for Dep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.block, self.var)
     }
 }
